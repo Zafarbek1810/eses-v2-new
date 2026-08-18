@@ -10,6 +10,7 @@ import {
   addRoleWithCompany,
   updateRole,
   deleteRole,
+  collectScopedRoles,
   type Role,
   type RolePayload,
 } from "@/api/role";
@@ -159,8 +160,8 @@ export function RolesSection({
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3000);
   };
 
-  const loadRoles = async () => {
-    setLoading(true);
+  const loadRoles = async (options?: { silent?: boolean; dropId?: number }) => {
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       if (companyId != null) {
@@ -168,22 +169,14 @@ export function RolesSection({
           getAllRoles(companyId),
           getCompanyById(companyId),
         ]);
-        const scoped = (Array.isArray(data) ? data : []).filter(role => {
-          const id = role.company?.id ?? role.company_id ?? role.companyId;
-          return id === companyId;
-        });
-        const byId = new Map(scoped.map(role => [role.id, role]));
-        for (const user of Array.isArray(company.user) ? company.user : []) {
-          if (!user.role || byId.has(user.role.id)) continue;
-          byId.set(user.role.id, {
-            id: user.role.id,
-            name: user.role.name,
-            description: user.role.description ?? "",
-            createdAt: user.role.createdAt ?? "",
-            user: [],
-          });
-        }
-        setRoles([...byId.values()]);
+        setRoles(prev =>
+          collectScopedRoles(
+            Array.isArray(data) ? data : [],
+            company,
+            companyId,
+            options?.dropId != null ? prev.filter(role => role.id !== options.dropId) : prev,
+          ),
+        );
       } else {
         const data = await getAllRoles();
         setRoles(Array.isArray(data) ? data : []);
@@ -193,7 +186,7 @@ export function RolesSection({
         ? err.message
         : "Rollarni yuklab bo'lmadi. Serverni tekshiring.";
       setError(msg);
-      setRoles([]);
+      if (!options?.silent) setRoles([]);
     } finally {
       setLoading(false);
     }
@@ -217,18 +210,21 @@ export function RolesSection({
     setSaving(true);
     try {
       if (modal.type === "add") {
-        if (companyId != null) {
-          await addRoleWithCompany({ ...form, company_id: companyId });
-        } else {
-          await addRole(form);
-        }
+        const created = companyId != null
+          ? await addRoleWithCompany({ ...form, company_id: companyId })
+          : await addRole(form);
         pushToast(`"${form.name}" roli qo'shildi`);
+        setModal(null);
+        if (created?.id != null) {
+          setRoles(prev => (prev.some(role => role.id === created.id) ? prev : [...prev, created]));
+        }
+        await loadRoles({ silent: true });
       } else {
         await updateRole(modal.role.id, form);
         pushToast(`"${form.name}" roli yangilandi`);
+        setModal(null);
+        await loadRoles({ silent: true });
       }
-      setModal(null);
-      await loadRoles();
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Saqlashda xatolik", "error");
     } finally {
@@ -240,10 +236,10 @@ export function RolesSection({
     if (modal?.type !== "delete") return;
     setSaving(true);
     try {
-      await deleteRole(modal.role.id);
+      await deleteRole(modal.role.id, companyId);
       pushToast(`"${modal.role.name}" o'chirildi`, "error");
       setModal(null);
-      await loadRoles();
+      await loadRoles({ silent: true, dropId: modal.role.id });
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "O'chirishda xatolik", "error");
     } finally {

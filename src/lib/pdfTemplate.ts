@@ -173,12 +173,10 @@ export const DYNAMIC_FIELDS: PdfDynamicFieldDef[] = [
   {
     key: "company_header_address",
     label: "Shablon usti adress",
-    sample:
-      "Manzil:__________, \nTelefon:________, Faks:__________,\nWeb sayt:________________\nTelegram kanal:____________",
-    hint: "Tashkilot manzili va telefon",
+    sample: "__________, Telefon ________",
+    hint: "Tashkilot manzili va telefon raqami",
     showLabelByDefault: false,
-    multiline: true,
-    defaultSize: { width: 280, height: 68 },
+    defaultSize: { width: 540, height: 22 },
     defaultStyle: { fontSize: 10, align: "left" },
   },
 ];
@@ -245,9 +243,6 @@ export function formatPdfDate(iso?: string | null): string {
 const COMPANY_HEADER_BLANK = "________";
 const COMPANY_ADDRESS_BLANK = "__________";
 const COMPANY_PHONE_BLANK = "________";
-const COMPANY_FAX_BLANK = "__________";
-const COMPANY_WEB_BLANK = "________________";
-const COMPANY_TELEGRAM_BLANK = "____________";
 
 function unwrapCompany(raw: unknown): Company | null {
   if (!raw || typeof raw !== "object") return null;
@@ -275,7 +270,7 @@ function companyFieldsFromRecord(company: Company | null | undefined): PdfCompan
     companyRegion: company?.region?.name?.trim() || null,
     companyDistrict: company?.district?.name?.trim() || null,
     companyAddress: company?.address?.trim() || null,
-    companyPhone: company?.phone?.trim() || null,
+    companyPhone: pickCompanyString(company, ["phone", "telefon", "phone_number", "phoneNumber"]),
     companyFax: pickCompanyString(company, ["fax", "faks"]),
     companyWebsite: pickCompanyString(company, ["website", "web", "web_site", "webSite"]),
     companyTelegram: pickCompanyString(company, ["telegram", "telegram_channel", "telegramChannel", "tg"]),
@@ -306,12 +301,9 @@ export function formatCompanyHeader(ctx: PdfDynamicContext): string {
 }
 
 export function formatCompanyHeaderAddress(ctx: PdfDynamicContext): string {
-  return [
-    `Manzil:${contactOrBlank(ctx.companyAddress, COMPANY_ADDRESS_BLANK)}, `,
-    `Telefon:${contactOrBlank(ctx.companyPhone, COMPANY_PHONE_BLANK)}, Faks:${contactOrBlank(ctx.companyFax, COMPANY_FAX_BLANK)},`,
-    `Web sayt:${contactOrBlank(ctx.companyWebsite, COMPANY_WEB_BLANK)}`,
-    `Telegram kanal:${contactOrBlank(ctx.companyTelegram, COMPANY_TELEGRAM_BLANK)}`,
-  ].join("\n");
+  const address = contactOrBlank(ctx.companyAddress, COMPANY_ADDRESS_BLANK);
+  const phone = contactOrBlank(ctx.companyPhone, COMPANY_PHONE_BLANK);
+  return `${address}, Telefon ${phone}`;
 }
 
 function emptyCompanyDynamicFields(): PdfCompanyDynamicFields {
@@ -337,6 +329,7 @@ export async function resolveStoredCompanyDynamic(
     companyName: stored?.name?.trim() || null,
     companyRegion: stored?.region?.name?.trim() || null,
     companyAddress: stored?.address?.trim() || null,
+    companyPhone: stored?.phone?.trim() || null,
   };
 
   const companyId = companyIdOverride ?? getStoredCompanyId();

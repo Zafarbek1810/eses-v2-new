@@ -810,6 +810,7 @@ export function PdfTemplateSection({
   };
 
   const isTextual = selected && ["heading1", "heading2", "heading3", "text"].includes(selected.type);
+  const canStyleText = Boolean(isTextual || selected?.type === "dynamic");
   const pageCount = getPdfPageCount(template);
   const previewHeight = getPdfPreviewHeight(template);
 
@@ -1030,20 +1031,23 @@ export function PdfTemplateSection({
                 </div>
 
                 {isTextual && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                      Matn *
+                    </label>
+                    <textarea
+                      autoFocus
+                      value={selected.content}
+                      onChange={e => updateElement(selected.id, { content: e.target.value })}
+                      rows={4}
+                      className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none focus:border-[var(--primary)] resize-none"
+                      placeholder="Matn kiriting..."
+                    />
+                  </div>
+                )}
+
+                {canStyleText && (
                   <>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-                        Matn *
-                      </label>
-                      <textarea
-                        autoFocus
-                        value={selected.content}
-                        onChange={e => updateElement(selected.id, { content: e.target.value })}
-                        rows={4}
-                        className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none focus:border-[var(--primary)] resize-none"
-                        placeholder="Matn kiriting..."
-                      />
-                    </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {(
                         [

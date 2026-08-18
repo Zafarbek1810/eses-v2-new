@@ -3,6 +3,7 @@ export type AuthCompany = {
   name: string;
   description: string;
   address: string;
+  phone?: string;
   createdAt: string;
   region?: { id: number; name: string } | null;
 };

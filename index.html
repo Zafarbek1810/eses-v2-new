@@ -9,6 +9,17 @@
       <meta name="description" content="Sanitariya-epidemiologiya xizmati boshqaruv platformasi — laboratoriya, kassa va natijalar." />
       <meta name="robots" content="noindex, nofollow" />
       <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
+      <script>
+        (function () {
+          try {
+            var mode = localStorage.getItem("ses-dark-mode");
+            var dark = mode === "dark"
+              || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+              || (mode !== "light" && mode !== "system");
+            if (dark) document.documentElement.classList.add("dark");
+          } catch (e) {}
+        })();
+      </script>
       
     </head>
 

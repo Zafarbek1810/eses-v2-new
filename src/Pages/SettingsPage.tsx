@@ -49,6 +49,7 @@ export function SettingsPage({
   const handleReset = () => {
     setLocalColor(DEFAULT_PRIMARY_COLOR);
     onColorChange(DEFAULT_PRIMARY_COLOR);
+    onDarkModeChange("dark");
     setSaved(true);
   };
 

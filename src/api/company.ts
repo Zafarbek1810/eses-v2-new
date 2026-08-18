@@ -156,11 +156,39 @@ export async function getCompaniesFull(
   return normalizeFullResponse(raw, params);
 }
 
-export function getCompanyById(id: number) {
-  return apiRequest<Company>(`/company/getby/${id}`, {
+export function unwrapCompany(raw: unknown): Company {
+  if (!raw || typeof raw !== "object") return raw as Company;
+  const obj = raw as Record<string, unknown>;
+  const nested = [obj.data, obj.company, obj.result].find(
+    item => item && typeof item === "object" && !Array.isArray(item) && "id" in (item as object),
+  ) as Record<string, unknown> | undefined;
+
+  const base = (
+    typeof obj.id === "number" && Number.isFinite(obj.id) && obj.id > 0
+      ? obj
+      : nested ?? obj
+  ) as Record<string, unknown>;
+
+  const extra = nested && nested !== base ? nested : undefined;
+  const user = base.user ?? base.users ?? extra?.user ?? extra?.users;
+  const role = base.role ?? extra?.role;
+  const roles = base.roles ?? extra?.roles;
+
+  return {
+    ...(extra ?? {}),
+    ...base,
+    ...(Array.isArray(user) ? { user } : {}),
+    ...(role !== undefined ? { role } : {}),
+    ...(roles !== undefined ? { roles } : {}),
+  } as Company;
+}
+
+export async function getCompanyById(id: number) {
+  const raw = await apiRequest<unknown>(`/company/getby/${id}`, {
     method: "GET",
     fallbackError: "Tashkilotni yuklab bo'lmadi",
   });
+  return unwrapCompany(raw);
 }
 
 export function addCompany(payload: CompanyPayload) {

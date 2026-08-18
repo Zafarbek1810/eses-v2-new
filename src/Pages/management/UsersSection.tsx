@@ -14,7 +14,7 @@ import {
   type UserPayload,
   type UserUpdatePayload,
 } from "@/api/user";
-import { getAllRoles, type Role } from "@/api/role";
+import { getAllRoles, collectScopedRoles, type Role } from "@/api/role";
 import { getCompanyById } from "@/api/company";
 import { getStoredCompanyId } from "@/api/session";
 import { ApiError } from "@/api/client";
@@ -312,22 +312,7 @@ export function UsersSection({
             getAllRoles(companyId),
             getCompanyById(companyId),
           ]);
-          const scoped = (Array.isArray(list) ? list : []).filter(role => {
-            const id = role.company?.id ?? role.company_id ?? role.companyId;
-            return id === companyId;
-          });
-          const byId = new Map(scoped.map(role => [role.id, role]));
-          for (const user of Array.isArray(company.user) ? company.user : []) {
-            if (!user.role || byId.has(user.role.id)) continue;
-            byId.set(user.role.id, {
-              id: user.role.id,
-              name: user.role.name,
-              description: user.role.description ?? "",
-              createdAt: user.role.createdAt ?? "",
-              user: [],
-            });
-          }
-          setRoles([...byId.values()]);
+          setRoles(collectScopedRoles(Array.isArray(list) ? list : [], company, companyId));
         } else {
           const list = await getAllRoles();
           setRoles(Array.isArray(list) ? list : []);

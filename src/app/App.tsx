@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import {
   LayoutDashboard, Users, Settings as SettingsIcon, Settings, ChevronLeft, ChevronDown,
   Sun, Moon, Monitor, Globe, LogOut, User, Edit3, X, Check, ImageOff,
@@ -52,6 +52,8 @@ import {
 import {
   WALLPAPERS,
   WALLPAPER_KEY,
+  WALLPAPER_NONE,
+  DEFAULT_WALLPAPER,
   getStoredWallpaper,
   wallpaperSrc,
   type WallpaperId,
@@ -78,6 +80,20 @@ const USER_PAGE_LABELS: Record<UserPageId, string> = {
 const PRIMARY_COLOR_KEY = "ses-primary-color";
 const DEFAULT_PRIMARY_COLOR = "#0D9488";
 const LEGACY_PRIMARY_COLOR = "#0EA5E9";
+const DARK_MODE_KEY = "ses-dark-mode";
+const DEFAULT_DARK_MODE: DarkMode = "dark";
+
+type DarkMode = "light" | "dark" | "system";
+
+function getStoredDarkMode(): DarkMode {
+  try {
+    const stored = localStorage.getItem(DARK_MODE_KEY);
+    if (stored === "light" || stored === "dark" || stored === "system") return stored;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_DARK_MODE;
+}
 
 function getStoredPrimaryColor(): string {
   try {
@@ -255,6 +271,20 @@ const GlobalStyles = () => (
     }
     .ses-glass-ui table {
       background-color: transparent;
+    }
+    .ses-overlay-panel {
+      --card: #ffffff;
+      --secondary: #e8efed;
+      --muted: #dde6e3;
+      background-color: #ffffff !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    .dark .ses-overlay-panel {
+      --card: #0d221e;
+      --secondary: #14332e;
+      --muted: #14332e;
+      background-color: #0d221e !important;
     }
 
     body { overflow: hidden; }
@@ -695,7 +725,7 @@ const Header = ({
             </button>
 
             {showNotif && (
-              <div className="absolute right-0 top-12 w-80 bg-card rounded-2xl border border-border shadow-xl overflow-hidden z-50">
+              <div className="ses-overlay-panel absolute right-0 top-12 w-80 rounded-2xl border border-border shadow-xl overflow-hidden z-50">
                 <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                   <span className="font-semibold text-foreground text-sm">Bildirishnomalar</span>
                   <span className="text-[11px] px-2 py-0.5 rounded-full text-white font-medium" style={{ background: primaryColor }}>
@@ -765,7 +795,7 @@ const Header = ({
           </button>
 
           {showUserMenu && (
-            <div className="absolute right-0 top-12 w-56 bg-card rounded-2xl border border-border shadow-xl overflow-hidden z-50">
+            <div className="ses-overlay-panel absolute right-0 top-12 w-56 rounded-2xl border border-border shadow-xl overflow-hidden z-50">
               <div className="px-4 py-3 border-b border-border">
                 <div className="text-[13px] font-semibold text-foreground truncate">{displayName}</div>
                 <div className="text-[11px] text-muted-foreground truncate">{user?.email ?? ""}</div>
@@ -811,8 +841,8 @@ const Header = ({
 type SettingsModalProps = {
   isOpen: boolean; onClose: () => void;
   primaryColor: string; onColorChange: (c: string) => void;
-  darkMode: "light" | "dark" | "system";
-  onDarkModeChange: (m: "light" | "dark" | "system") => void;
+  darkMode: DarkMode;
+  onDarkModeChange: (m: DarkMode) => void;
   wallpaperId: WallpaperId | null;
   onWallpaperChange: (id: WallpaperId | null) => void;
 };
@@ -1017,7 +1047,8 @@ const SettingsModal = ({
             onClick={() => {
               setLocalColor(DEFAULT_PRIMARY_COLOR);
               onColorChange(DEFAULT_PRIMARY_COLOR);
-              onWallpaperChange(null);
+              onDarkModeChange(DEFAULT_DARK_MODE);
+              onWallpaperChange(DEFAULT_WALLPAPER);
             }}
             className="flex-1 py-2.5 rounded-2xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
           >
@@ -1044,8 +1075,8 @@ type DashboardProps = {
   onDarkToggle: () => void;
   onSettingsOpen: () => void;
   onColorChange: (c: string) => void;
-  darkMode: "light" | "dark" | "system";
-  onDarkModeChange: (m: "light" | "dark" | "system") => void;
+  darkMode: DarkMode;
+  onDarkModeChange: (m: DarkMode) => void;
   user: AuthUser | null;
   onUserUpdated: (user: AuthUser) => void;
   onLogout: () => void;
@@ -1307,18 +1338,25 @@ export default function App() {
   );
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
   const [primaryColor, setPrimaryColor] = useState(getStoredPrimaryColor);
-  const [darkMode, setDarkMode] = useState<"light" | "dark" | "system">("light");
+  const [darkMode, setDarkMode] = useState<DarkMode>(getStoredDarkMode);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [wallpaperId, setWallpaperId] = useState<WallpaperId | null>(getStoredWallpaper);
 
   useEffect(() => {
     try {
-      if (wallpaperId) localStorage.setItem(WALLPAPER_KEY, wallpaperId);
-      else localStorage.removeItem(WALLPAPER_KEY);
+      localStorage.setItem(WALLPAPER_KEY, wallpaperId ?? WALLPAPER_NONE);
     } catch {
       /* ignore */
     }
   }, [wallpaperId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DARK_MODE_KEY, darkMode);
+    } catch {
+      /* ignore */
+    }
+  }, [darkMode]);
 
   // Ensure role is present for already-authenticated sessions
   useEffect(() => {
@@ -1362,7 +1400,7 @@ export default function App() {
   }, [primaryColor]);
 
   // Sync dark mode class
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isDark) {
       document.documentElement.classList.add("dark");
     } else {
