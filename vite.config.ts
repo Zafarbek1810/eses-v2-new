@@ -43,6 +43,11 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy,
     },
+    preview: {
+      // `vite preview` / serverda static build: xuddi shu proxy
+      port: 4173,
+      proxy,
+    },
 
     // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
     assetsInclude: ['**/*.svg', '**/*.csv'],
