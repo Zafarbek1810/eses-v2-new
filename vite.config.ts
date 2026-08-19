@@ -17,7 +17,7 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backendUrl = (env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '')
+  const backendUrl = (env.VITE_API_BASE_URL || 'http://64.188.59.127:3000').replace(/\/$/, '')
 
   const proxyPaths = ['/user', '/role', '/laboratory', '/baselaboratory', '/patient', '/region', '/analysis', '/baseanalysis', '/order', '/pattern', '/result', '/company', '/onlinestorage', '/globalstorage', '/plan', '/subscription'] as const
   const proxy = Object.fromEntries(
