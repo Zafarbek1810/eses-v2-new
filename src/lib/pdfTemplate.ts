@@ -3,6 +3,7 @@ import {
   deleteOnlineStorage,
   extractOnlineStorageId,
   getAllOnlineStorages,
+  getOnlineStorageById,
   resolveOnlineStorageAnalysisId,
   updateOnlineStorage,
   type OnlineStorage,
@@ -1189,6 +1190,68 @@ const PDF_ELEMENT_TYPES = new Set<PdfElementType>([
   "dynamic",
 ]);
 
+function looksLikeImageSrc(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const src = value.trim();
+  return (
+    src.startsWith("data:image/") ||
+    src.startsWith("blob:") ||
+    /^https?:\/\//i.test(src)
+  );
+}
+
+function pickPdfElementImageSrc(el: Record<string, unknown>): string | undefined {
+  const candidates = [el.imageSrc, el.image_src, el.src, el.url];
+  for (const candidate of candidates) {
+    if (looksLikeImageSrc(candidate)) return candidate.trim();
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  if (looksLikeImageSrc(el.content)) return String(el.content).trim();
+  return undefined;
+}
+
+export function pdfTemplateNeedsImageHydration(template: PdfTemplate | null | undefined): boolean {
+  if (!template) return false;
+  const storageId = Number(template.storageId);
+  if (!Number.isFinite(storageId) || storageId <= 0) return false;
+  if (template.elements.length === 0) return true;
+  return template.elements.some(
+    el => el.type === "image" && !String(el.imageSrc ?? "").trim(),
+  );
+}
+
+/** getall ba'zan katta base64 rasmlarni qisqartiradi — getby dan to'liq shablonni olamiz */
+export async function hydratePdfTemplateImages(template: PdfTemplate): Promise<PdfTemplate> {
+  if (!pdfTemplateNeedsImageHydration(template)) return template;
+  const storageId = Number(template.storageId);
+  try {
+    const record = await getOnlineStorageById(storageId, {
+      companyId: template.companyId ?? undefined,
+    });
+    const full = onlineStorageRecordToPdfTemplate(record);
+    if (!full) return template;
+    return {
+      ...full,
+      analysisId: template.analysisId ?? full.analysisId,
+      analysisName: template.analysisName || full.analysisName,
+    };
+  } catch {
+    return template;
+  }
+}
+
+export async function hydratePdfTemplatesImages(templates: PdfTemplate[]): Promise<PdfTemplate[]> {
+  const list = Array.isArray(templates) ? templates : [];
+  const result: PdfTemplate[] = [];
+  const chunkSize = 8;
+  for (let i = 0; i < list.length; i += chunkSize) {
+    const chunk = list.slice(i, i + chunkSize);
+    const hydrated = await Promise.all(chunk.map(hydratePdfTemplateImages));
+    result.push(...hydrated);
+  }
+  return result;
+}
+
 /** Harden API/localStorage payloads so missing `style` etc. cannot crash the editor. */
 export function normalizePdfElement(raw: unknown): PdfElement | null {
   if (!raw || typeof raw !== "object") return null;
@@ -1219,7 +1282,7 @@ export function normalizePdfElement(raw: unknown): PdfElement | null {
     height:
       Number.isFinite(Number(el.height)) && Number(el.height) > 0 ? Number(el.height) : size.height,
     content: el.content == null ? defaultContentForType(type) : String(el.content),
-    imageSrc: typeof el.imageSrc === "string" ? el.imageSrc : undefined,
+    imageSrc: type === "image" ? pickPdfElementImageSrc(el) : undefined,
     analysisId:
       Number.isFinite(analysisIdRaw) && analysisIdRaw > 0 ? analysisIdRaw : null,
     analysisName: typeof el.analysisName === "string" ? el.analysisName : "",
@@ -1597,9 +1660,10 @@ export async function fetchPdfTemplatesFromApi(companyId?: number): Promise<PdfT
     await ensureCompanyPdfTemplatesFromGlobal(companyId).catch(() => 0);
   }
   const records = await getAllOnlineStorages(companyId);
-  const templates = records
+  const parsed = records
     .map(onlineStorageRecordToPdfTemplate)
     .filter((t): t is PdfTemplate => t != null);
+  const templates = await hydratePdfTemplatesImages(parsed);
 
   // Cache ixtiyoriy — quota to'lsa ham xotiradagi ro'yxat qaytadi
   try {

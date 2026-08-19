@@ -35,9 +35,10 @@ import {
   A4_PREVIEW_WIDTH,
   bodyCellKey,
   fetchPdfTemplatesFromApi,
-  getActivePdfTemplate,
   getPdfPreviewHeight,
   headerCellKey,
+  hydratePdfTemplateImages,
+  hydratePdfTemplatesImages,
   isDynamicCell,
   loadPdfTemplates,
   normalizeTableData,
@@ -93,13 +94,10 @@ function resolveTemplateForAnalysis(
   analysisName: string,
   list: PdfTemplate[],
 ): PdfTemplate | null {
-  const active = getActivePdfTemplate();
-  const candidates = active ? [active, ...list.filter(t => t.id !== active.id)] : list;
   const base =
-    candidates.find(t => t.analysisId === analysisId) ||
-    candidates.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
-    candidates.find(t => t.elements.some(el => el.type === "table")) ||
-    active ||
+    list.find(t => t.analysisId === analysisId) ||
+    list.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
+    list.find(t => t.elements.some(el => el.type === "table")) ||
     list[0] ||
     null;
   if (!base) return null;
@@ -190,7 +188,9 @@ export function OrderResultsReview({
       const [orderData, results, templates] = await Promise.all([
         getOrderById(orderId),
         getAllResults().catch(() => [] as ResultRecord[]),
-        fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() => loadPdfTemplates()),
+        fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() =>
+          hydratePdfTemplatesImages(loadPdfTemplates()),
+        ),
       ]);
 
       setOrder(orderData);
@@ -222,7 +222,14 @@ export function OrderResultsReview({
         if (!analysisId) continue;
         const analysisName = item.analysis?.name ?? `Analiz #${analysisId}`;
         const laboratoryName = item.laboratory?.name ?? "—";
-        const tpl = resolveTemplateForAnalysis(analysisId, analysisName, templates);
+        const resolved = resolveTemplateForAnalysis(analysisId, analysisName, templates);
+        const tpl = resolved
+          ? bindTemplateToAnalysis(
+              await hydratePdfTemplateImages(resolved),
+              analysisId,
+              analysisName,
+            )
+          : null;
         const saved = decodeGridFillFromItems(savedItems, analysisId);
         const hasSavedValues = Object.values(saved).some(v => String(v ?? "").trim() !== "");
 

@@ -45,9 +45,10 @@ import {
   A4_PREVIEW_WIDTH,
   bodyCellKey,
   fetchPdfTemplatesFromApi,
-  getActivePdfTemplate,
   getPdfPreviewHeight,
   headerCellKey,
+  hydratePdfTemplateImages,
+  hydratePdfTemplatesImages,
   isDynamicCell,
   loadPdfTemplates,
   normalizeTableData,
@@ -224,16 +225,13 @@ function bindTemplateToAnalysis(
 function resolveTemplateForAnalysis(
   analysisId: number,
   analysisName: string,
-  list: PdfTemplate[] = loadPdfTemplates(),
+  list: PdfTemplate[],
 ): PdfTemplate | null {
-  const active = getActivePdfTemplate();
-  const candidates = active ? [active, ...list.filter(t => t.id !== active.id)] : list;
-
+  // Faqat berilgan ro'yxat (API). localStorage cache katta rasmlarni olib tashlaydi.
   const base =
-    candidates.find(t => t.analysisId === analysisId) ||
-    candidates.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
-    candidates.find(t => t.elements.some(el => el.type === "table")) ||
-    active ||
+    list.find(t => t.analysisId === analysisId) ||
+    list.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
+    list.find(t => t.elements.some(el => el.type === "table")) ||
     list[0] ||
     null;
 
@@ -355,9 +353,15 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setSelected(row);
     setPdfZoom(PDF_ZOOM_DEFAULT);
     try {
-      const allTemplates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() => [] as PdfTemplate[]);
+      const allTemplates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(
+        async () => hydratePdfTemplatesImages(loadPdfTemplates()),
+      );
       setAvailableTemplates(allTemplates);
-      const tpl = resolveTemplateForAnalysis(row.analysisId, row.analysisName, allTemplates);
+      let tpl = resolveTemplateForAnalysis(row.analysisId, row.analysisName, allTemplates);
+      if (tpl) {
+        const hydrated = await hydratePdfTemplateImages(tpl);
+        tpl = bindTemplateToAnalysis(hydrated, row.analysisId, row.analysisName);
+      }
       setTemplate(tpl);
 
       let order: Order | null = null;

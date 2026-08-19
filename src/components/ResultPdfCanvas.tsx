@@ -161,19 +161,7 @@ function FillableElement({
     >
       {element.type === "image" ? (
         element.imageSrc ? (
-          <img
-            src={element.imageSrc}
-            alt=""
-            className="pointer-events-none select-none"
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              display: "block",
-            }}
-            draggable={false}
-            crossOrigin="anonymous"
-          />
+          <PdfTemplateImage src={element.imageSrc} />
         ) : null
       ) : element.type === "table" ? (
         <div className="w-full bg-white" style={{ pointerEvents: readOnly ? "none" : "auto" }}>
@@ -191,5 +179,30 @@ function FillableElement({
         <div style={textStyle}>{element.content || " "}</div>
       )}
     </div>
+  );
+}
+
+function PdfTemplateImage({ src }: { src: string }) {
+  const isRemote = /^https?:\/\//i.test(src);
+  const [corsMode, setCorsMode] = React.useState(isRemote);
+
+  return (
+    <img
+      key={corsMode ? "cors" : "plain"}
+      src={src}
+      alt=""
+      className="pointer-events-none select-none"
+      style={{
+        width: "100%",
+        height: "100%",
+        objectFit: "contain",
+        display: "block",
+      }}
+      draggable={false}
+      {...(corsMode ? { crossOrigin: "anonymous" as const } : {})}
+      onError={() => {
+        if (corsMode) setCorsMode(false);
+      }}
+    />
   );
 }
