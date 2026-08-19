@@ -184,3 +184,8 @@
     line-height: 1.5;
   }
 }
+
+.pdf-times,
+.pdf-times * {
+  font-family: "Times New Roman", Times, serif !important;
+}

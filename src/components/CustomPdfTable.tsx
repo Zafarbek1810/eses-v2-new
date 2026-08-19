@@ -14,6 +14,7 @@ import {
   isInSelection,
   normalizeCellValueMode,
   normalizeTableData,
+  PDF_FONT_FAMILY,
   resizeAdjacentColWidths,
   type PdfCellValueMode,
   type PdfTableCell,
@@ -199,6 +200,7 @@ export function CustomPdfTable({
     borderCollapse: "collapse",
     borderSpacing: 0,
     width: "100%",
+    fontFamily: PDF_FONT_FAMILY,
     ...(readOnly ? { border: "none" } : {}),
   };
 

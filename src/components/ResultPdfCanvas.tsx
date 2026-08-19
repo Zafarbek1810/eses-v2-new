@@ -4,6 +4,8 @@ import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_SCALE,
   A4_PREVIEW_WIDTH,
+  PDF_CANVAS_FONT_CLASS,
+  PDF_FONT_FAMILY,
   formatDynamicDisplay,
   getPdfPageCount,
   getPdfPageMarginPreview,
@@ -52,8 +54,8 @@ export const ResultPdfCanvas = React.forwardRef<
     return (
       <div
         ref={ref}
-        className="relative bg-white shrink-0"
-        style={{ width: A4_PREVIEW_WIDTH, height }}
+        className={`relative bg-white shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
+        style={{ width: A4_PREVIEW_WIDTH, height, fontFamily: PDF_FONT_FAMILY }}
       >
         {Array.from({ length: pageCount }, (_, page) => (
           <div
@@ -93,8 +95,8 @@ export const ResultPdfCanvas = React.forwardRef<
   return (
     <div
       ref={ref}
-      className="relative bg-white shrink-0 shadow-xl border border-slate-200"
-      style={{ width: A4_PREVIEW_WIDTH, height }}
+      className={`relative bg-white shrink-0 shadow-xl border border-slate-200 ${PDF_CANVAS_FONT_CLASS}`}
+      style={{ width: A4_PREVIEW_WIDTH, height, fontFamily: PDF_FONT_FAMILY }}
     >
       {pageCount > 1 &&
         Array.from({ length: pageCount - 1 }, (_, i) => (
@@ -131,6 +133,7 @@ function FillableElement({
   const isTable = element.type === "table";
 
   const textStyle: React.CSSProperties = {
+    fontFamily: PDF_FONT_FAMILY,
     fontWeight: element.style?.bold ? 700 : 400,
     fontStyle: element.style?.italic ? "italic" : "normal",
     textDecoration: element.style?.underline ? "underline" : "none",

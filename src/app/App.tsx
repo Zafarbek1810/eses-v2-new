@@ -182,6 +182,7 @@ const GlobalStyles = () => (
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
     * { font-family: 'Plus Jakarta Sans', 'IBM Plex Sans', system-ui, sans-serif; }
+    .pdf-times, .pdf-times * { font-family: "Times New Roman", Times, serif !important; }
 
     @keyframes sesBlob {
       0%   { transform: translate(0px, 0px) scale(1); }

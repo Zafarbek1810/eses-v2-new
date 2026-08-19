@@ -20,6 +20,8 @@ import {
   A4_PREVIEW_WIDTH,
   A4_WIDTH,
   DYNAMIC_FIELDS,
+  PDF_CANVAS_FONT_CLASS,
+  PDF_FONT_FAMILY,
   PDF_MAX_PAGES,
   createDynamicElement,
   createEmptyTableData,
@@ -1377,10 +1379,11 @@ export function PdfTemplateSection({
                   setEditingId(null);
                 }
               }}
-              className="relative bg-white shadow-xl border border-slate-200 shrink-0"
+              className={`relative bg-white shadow-xl border border-slate-200 shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
               style={{
                 width: A4_PREVIEW_WIDTH,
                 height: previewHeight,
+                fontFamily: PDF_FONT_FAMILY,
               }}
             >
               {pageCount > 1 &&
@@ -2037,6 +2040,7 @@ function CanvasElement({
   };
 
   const textStyle: React.CSSProperties = {
+    fontFamily: PDF_FONT_FAMILY,
     fontWeight: element.style?.bold ? 700 : 400,
     fontStyle: element.style?.italic ? "italic" : "normal",
     textDecoration: element.style?.underline ? "underline" : "none",

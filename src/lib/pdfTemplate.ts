@@ -504,6 +504,9 @@ export const ACTIVE_PDF_TEMPLATE_KEY = "ses-pdf-active-template-id";
 export const A4_WIDTH = 595;
 export const A4_HEIGHT = 842;
 export const A4_PREVIEW_SCALE = 0.72;
+/** PDF shablon matnlari uchun default shrift */
+export const PDF_FONT_FAMILY = '"Times New Roman", Times, serif';
+export const PDF_CANVAS_FONT_CLASS = "pdf-times";
 export const A4_PREVIEW_WIDTH = Math.round(A4_WIDTH * A4_PREVIEW_SCALE);
 export const A4_PREVIEW_HEIGHT = Math.round(A4_HEIGHT * A4_PREVIEW_SCALE);
 /** Soft cap for very long templates (keeps editor usable) */

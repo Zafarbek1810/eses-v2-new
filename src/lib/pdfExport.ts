@@ -1,6 +1,6 @@
 import html2canvas from "html2canvas-pro";
 import { jsPDF } from "jspdf";
-import { A4_HEIGHT, A4_WIDTH } from "@/lib/pdfTemplate";
+import { A4_HEIGHT, A4_WIDTH, PDF_FONT_FAMILY } from "@/lib/pdfTemplate";
 
 type CaptureResult = {
   canvas: HTMLCanvasElement;
@@ -31,6 +31,10 @@ async function captureElement(el: HTMLElement): Promise<CaptureResult> {
     onclone: (_doc, cloned) => {
       // scale:2 → 0.5px CSS = 1px in the final bitmap/PDF
       const border = `${1 / captureScale}px solid #000`;
+      cloned.style.fontFamily = PDF_FONT_FAMILY;
+      cloned.querySelectorAll("*").forEach(n => {
+        (n as HTMLElement).style.fontFamily = PDF_FONT_FAMILY;
+      });
       cloned.querySelectorAll("[data-pdf-page-break]").forEach(n => n.remove());
       cloned.querySelectorAll("table").forEach(t => {
         const table = t as HTMLElement;
