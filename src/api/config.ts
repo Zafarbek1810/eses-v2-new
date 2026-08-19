@@ -1,7 +1,7 @@
 /**
  * Backend API base URL.
  *
- * `.env`: VITE_API_BASE_URL=http://64.188.59.127:3000
+ * Dev va production: VITE_API_BASE_URL=http://64.188.59.127:3000
  * Dev: Vite proxy (CORS yo'q). Production build: brauzer to'g'ridan-to'g'ri shu URL ga so'rov yuboradi.
  */
 const fromEnv = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "");
