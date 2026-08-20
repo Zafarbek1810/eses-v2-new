@@ -1,0 +1,14 @@
+# SPA: /showresult/... va boshqa client route lar uchun index.html
+# Vite build paytida dist/ ga ko'chiriladi. Apache da AllowOverride All kerak.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Mavjud fayl/papka bo'lsa — o'zini ber
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+  # Aks holda React SPA
+  RewriteRule ^ index.html [L]
+</IfModule>
