@@ -26,7 +26,7 @@ function paramsFromTriple(
   return { orderId, analysisId, storageId };
 }
 
-/** Hash: #/showresult/1/2/3 yoki #showresult/1/2/3 */
+/** Hash: #/showresult/1/2/3 */
 function pathFromHash(hash: string): string {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   if (!raw) return "";
@@ -45,9 +45,9 @@ export function getPublicAppOrigin(): string {
 
 /**
  * URL dan parametrlarni o'qish:
- * - /showresult/1/2/3 (rewrite bo'lsa)
+ * - /showresult/1/2/3  (asosiy)
  * - #/showresult/1/2/3
- * - /?orderId=1&analysisId=2&storageId=3  (Apache rewrite kerak emas)
+ * - ?orderId&analysisId&storageId (eski / fallback)
  */
 export function parseShowResultParams(
   pathname = typeof window !== "undefined" ? window.location.pathname : "",
@@ -73,17 +73,12 @@ export function parseShowResultParams(
     q.get("analysisId") ?? q.get("a"),
     q.get("storageId") ?? q.get("onlineStorageId") ?? q.get("s"),
   );
-  if (fromQuery) {
-    // /showresult?... yoki bosh sahifa /?... (production Apache uchun)
-    if (/^\/showresult$/i.test(path) || path === "/" || /^\/index\.html$/i.test(path)) {
-      return fromQuery;
-    }
-    // Boshqa pathda ham showresult=1 belgilangan bo'lsa
-    if (q.get("showresult") === "1" || q.has("showresult")) {
-      return fromQuery;
-    }
-  }
+  if (!fromQuery) return null;
 
+  if (/^\/showresult$/i.test(path) || path === "/" || /^\/index\.html$/i.test(path)) {
+    return fromQuery;
+  }
+  if (q.has("showresult")) return fromQuery;
   return null;
 }
 
@@ -98,37 +93,25 @@ export function isShowResultRoute(
   const hashPath = pathFromHash(hash).replace(/\/+$/, "") || "";
   if (/^\/showresult(\/|$)/i.test(hashPath)) return true;
 
-  // Production: rewrite yo'q — query bilan ochiladi
   return parseShowResultParams(pathname, search, hash) != null;
 }
 
-/** PIN: orderId+analysisId+storageId → "1372226" */
+/** PIN: /showresult/137/22/26 → "1372226" */
 export function buildShowResultPin(params: ShowResultParams): string {
   return `${params.orderId}${params.analysisId}${params.storageId}`;
 }
 
-/**
- * Relativ path (dev / rewrite bo'lsa).
- * Production SMS uchun buildShowResultUrl query formatini ishlatadi.
- */
+/** Relativ path: /showresult/{orderId}/{analysisId}/{storageId} */
 export function buildShowResultPath(params: ShowResultParams): string {
   const { orderId, analysisId, storageId } = params;
   return `${SHOW_RESULT_PREFIX}/${orderId}/${analysisId}/${storageId}`;
 }
 
-/**
- * To'liq ochiladigan URL (SMS / QR).
- * Query format: Apache rewrite / .htaccess ishlamasa ham / index.html ni topadi.
- */
+/** To'liq ochiladigan URL (SMS / QR) — path ko'rinishi */
 export function buildShowResultUrl(
   params: ShowResultParams,
   origin = getPublicAppOrigin(),
 ): string {
   const base = origin.replace(/\/$/, "");
-  const q = new URLSearchParams({
-    orderId: String(params.orderId),
-    analysisId: String(params.analysisId),
-    storageId: String(params.storageId),
-  });
-  return `${base}/?${q.toString()}`;
+  return `${base}${buildShowResultPath(params)}`;
 }

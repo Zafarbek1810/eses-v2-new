@@ -1,15 +1,17 @@
-# SPA fallback — Apache AllowOverride All + mod_rewrite kerak.
-# Agar rewrite o'chiq bo'lsa, showresult havolalari query formatda:
-#   https://eses.uz/?orderId=213&analysisId=45&storageId=44
+# /showresult/213/45/44 → index.html (SPA)
+# Vite build: public/.htaccess → dist/.htaccess (yashirin fayl — FTP da ko'rsatishni yoqing)
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
 
+  # Mavjud fayl/papka — o'zini ber
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^ index.html [L]
+
+  # Qolgan barcha route lar (showresult va boshqalar)
+  RewriteRule . /index.html [L]
 </IfModule>
 
-# Rewrite ishlamasa ham deep-link 404 ni SPA ga qaytarish (ba'zi hostlarda)
+# Rewrite o'chiq bo'lsa ham 404 → SPA
 ErrorDocument 404 /index.html

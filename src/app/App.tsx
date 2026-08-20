@@ -1440,7 +1440,7 @@ export default function App() {
           <div className="max-w-md rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
             <p className="text-sm font-medium text-slate-900">Noto&apos;g&apos;ri havola</p>
             <p className="mt-2 text-sm text-slate-600">
-              Format: /?orderId={"{id}"}&analysisId={"{id}"}&storageId={"{id}"}
+              Format: /showresult/{"{orderId}"}/{"{analysisId}"}/{"{storageId}"}
             </p>
           </div>
         </div>
