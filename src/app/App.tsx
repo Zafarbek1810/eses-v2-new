@@ -1330,8 +1330,8 @@ const Dashboard = ({
 export default function App() {
   const showResultParams = useMemo(() => {
     if (typeof window === "undefined") return null;
-    if (!isShowResultRoute(window.location.pathname)) return null;
-    return parseShowResultParams(window.location.pathname, window.location.search);
+    if (!isShowResultRoute()) return null;
+    return parseShowResultParams();
   }, []);
 
   const [page, setPage] = useState<"login" | "dashboard">(() =>
@@ -1440,7 +1440,7 @@ export default function App() {
           <div className="max-w-md rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
             <p className="text-sm font-medium text-slate-900">Noto&apos;g&apos;ri havola</p>
             <p className="mt-2 text-sm text-slate-600">
-              Format: /showresult/{"{orderId}"}/{"{analysisId}"}/{"{storageId}"}
+              Format: /?orderId={"{id}"}&analysisId={"{id}"}&storageId={"{id}"}
             </p>
           </div>
         </div>
