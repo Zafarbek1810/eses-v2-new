@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Users, Settings as SettingsIcon, Settings, ChevronLeft, ChevronDown,
   Sun, Moon, Monitor, Globe, LogOut, User, Edit3, X, Check, ImageOff,
   Bell, HelpCircle, Phone, UserPlus, Wallet, ClipboardList, FileBarChart2, Building2, MapPin,
-  Package, WalletCards, History, FlaskConical, TestTube2, FileType,
+  Package, WalletCards, History, FlaskConical, TestTube2, FileType, Sparkles,
 } from "lucide-react";
 import {
   clearSession,
@@ -15,6 +15,7 @@ import {
 } from "@/api/auth";
 import { getUserById } from "@/api/user";
 import { clearPdfTemplatesStorage } from "@/lib/pdfTemplate";
+import { clearAiDemoStorage } from "@/lib/aiChatStorage";
 import {
   canAccessNav,
   getAllowedNavIds,
@@ -43,6 +44,7 @@ import {
   ProfilePage,
   EditProfilePage,
   SettingsPage,
+  AiDemoPage,
 } from "@/Pages";
 import type { Company } from "@/api/company";
 import {
@@ -147,6 +149,7 @@ const NAV_ITEMS: NavItem[] = [
       { id: "global-templates", label: "Global shablonlar", icon: FileType },
     ],
   },
+  { id: "ai-demo", label: "Sun'iy intelekt (demo)", icon: Sparkles, section: "main" },
   // { id: "employees", label: "Employees", icon: Users, section: "main" },
 ];
 
@@ -1314,6 +1317,7 @@ const Dashboard = ({
       return <SuperAdminGlobalDataPage primaryColor={primaryColor} section="templates" />;
     }
     if (activeNav === "dashboard") return <DashboardPage primaryColor={primaryColor} />;
+    if (activeNav === "ai-demo") return <AiDemoPage primaryColor={primaryColor} />;
     return null;
   };
 
@@ -1451,6 +1455,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    clearAiDemoStorage(user?.id ?? getStoredUser()?.id);
     clearSession();
     clearPdfTemplatesStorage();
     setUser(null);

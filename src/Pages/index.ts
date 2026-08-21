@@ -19,3 +19,4 @@ export { ShowResultPage } from "./ShowResultPage";
 export { ProfilePage } from "./ProfilePage";
 export { EditProfilePage } from "./EditProfilePage";
 export { SettingsPage } from "./SettingsPage";
+export { AiDemoPage } from "./AiDemoPage";

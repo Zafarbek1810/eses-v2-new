@@ -13,6 +13,7 @@ import {
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { getOrderTotalAmountRange, type OrderTotalAmountRange } from "@/api/order";
+import { getAllLaboratories } from "@/api/laboratory";
 import { getStoredUser } from "@/api/session";
 import { normalizeRoleName } from "@/lib/roles";
 import { Calendar as DatePickerCalendar } from "@/app/components/ui/calendar";
@@ -32,13 +33,11 @@ const TREND_DATA = [
   { month: "Jul", applications: 521, inspections: 178 },
 ];
 
-const REGION_DATA = [
-  { region: "Tashkent", count: 342 },
-  { region: "Samarkand", count: 189 },
-  { region: "Fergana", count: 156 },
-  { region: "Andijan", count: 134 },
-  { region: "Namangan", count: 98 },
-];
+type LabChartRow = {
+  lab: string;
+  count: number;
+  totalFinalAmount: number;
+};
 
 const ACTIVITIES = [
   { id: "APP-2024-1842", type: "Application", org: "Alpha Pharma LLC", status: "Pending", date: "24 Jul 2024", inspector: "A. Karimov" },
@@ -186,6 +185,9 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [labPaid, setLabPaid] = useState<OrderTotalAmountRange>(emptyRange);
   const [labPending, setLabPending] = useState<OrderTotalAmountRange>(emptyRange);
 
+  const [labChartLoading, setLabChartLoading] = useState(true);
+  const [labChartData, setLabChartData] = useState<LabChartRow[]>([]);
+
   const selectedRange: DateRange = {
     from: parseIsoDate(startDate),
     to: parseIsoDate(endDate),
@@ -239,6 +241,59 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       cancelled = true;
     };
   }, [isLabStatsRole, startDate, endDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      setLabChartLoading(true);
+      try {
+        const labs = await getAllLaboratories();
+        if (cancelled) return;
+
+        const list = Array.isArray(labs) ? labs : [];
+        const rows: LabChartRow[] = [];
+
+        // Parallel, lekin juda ko'p lab bo'lsa batch qilib so'raymiz
+        const BATCH = 6;
+        for (let i = 0; i < list.length; i += BATCH) {
+          const chunk = list.slice(i, i + BATCH);
+          const part = await Promise.all(
+            chunk.map(async lab => {
+              try {
+                const stats = await getOrderTotalAmountRange({ lab_id: lab.id });
+                return {
+                  lab: lab.name?.trim() || `Lab #${lab.id}`,
+                  count: stats.count,
+                  totalFinalAmount: stats.totalFinalAmount,
+                } satisfies LabChartRow;
+              } catch {
+                return {
+                  lab: lab.name?.trim() || `Lab #${lab.id}`,
+                  count: 0,
+                  totalFinalAmount: 0,
+                } satisfies LabChartRow;
+              }
+            }),
+          );
+          if (cancelled) return;
+          rows.push(...part);
+        }
+
+        if (cancelled) return;
+        rows.sort((a, b) => b.count - a.count || b.totalFinalAmount - a.totalFinalAmount);
+        setLabChartData(rows);
+      } catch {
+        if (!cancelled) setLabChartData([]);
+      } finally {
+        if (!cancelled) setLabChartLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const defaultStats = [
     {
@@ -421,18 +476,67 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
         <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="mb-5">
-            <h3 className="text-[14px] font-bold text-foreground tracking-tight">Inspections by Region</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Top 5 regions · YTD 2024</p>
+            <h3 className="text-[14px] font-bold text-foreground tracking-tight">Laboratoriyalar</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Buyurtmalar soni · barcha laboratoriyalar
+            </p>
           </div>
-          <ResponsiveContainer width="100%" height={195}>
-            <BarChart data={REGION_DATA} layout="vertical" margin={{ top: 0, right: 8, bottom: 0, left: -8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
-              <YAxis dataKey="region" type="category" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} width={70} />
-              <Tooltip contentStyle={customTooltipStyle} />
-              <Bar dataKey="count" name="Inspections" fill={primaryColor} radius={[0, 4, 4, 0]} maxBarSize={18} />
-            </BarChart>
-          </ResponsiveContainer>
+          {labChartLoading ? (
+            <div className="h-[195px] flex items-center justify-center text-muted-foreground gap-2 text-[13px]">
+              <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
+            </div>
+          ) : labChartData.length === 0 ? (
+            <div className="h-[195px] flex items-center justify-center text-[13px] text-muted-foreground">
+              Laboratoriya ma&apos;lumoti yo&apos;q
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(195, labChartData.length * 28)}>
+              <BarChart
+                data={labChartData}
+                layout="vertical"
+                margin={{ top: 0, right: 8, bottom: 0, left: -8 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                <XAxis
+                  type="number"
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  allowDecimals={false}
+                />
+                <YAxis
+                  dataKey="lab"
+                  type="category"
+                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={90}
+                  tickFormatter={(v: string) =>
+                    v.length > 14 ? `${v.slice(0, 12)}…` : v
+                  }
+                />
+                <Tooltip
+                  contentStyle={customTooltipStyle}
+                  formatter={(value: number | string) => [
+                    Number(value).toLocaleString("uz-UZ"),
+                    "Buyurtmalar",
+                  ]}
+                  labelFormatter={(label, payload) => {
+                    const row = payload?.[0]?.payload as LabChartRow | undefined;
+                    const amount = row ? formatSom(row.totalFinalAmount) : "";
+                    return amount ? `${label} · ${amount}` : String(label);
+                  }}
+                />
+                <Bar
+                  dataKey="count"
+                  name="Buyurtmalar"
+                  fill={primaryColor}
+                  radius={[0, 4, 4, 0]}
+                  maxBarSize={18}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 

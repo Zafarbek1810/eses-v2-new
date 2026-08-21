@@ -24,26 +24,28 @@ export type NavId =
   | "kassa"
   | "orders"
   | "results"
-  | "employees";
+  | "employees"
+  | "ai-demo";
 
 const NAV_GROUP_CHILDREN: Partial<Record<NavId, readonly NavId[]>> = {
   "global-data": ["global-laboratories", "global-analyses", "global-templates"],
 };
 
 const ROLE_NAV: Record<AppRole, readonly NavId[]> = {
-  super_admin: ["dashboard", "region-admins", "plans", "subscriptions", "history", "global-data"],
-  admin: ["dashboard", "companies", "plans"],
+  super_admin: ["dashboard", "region-admins", "plans", "subscriptions", "history", "global-data", "ai-demo"],
+  admin: ["dashboard", "companies", "plans", "ai-demo"],
   director: [
     "dashboard",
     "management",
+    "ai-demo",
     // "patients",
     // "kassa",
     // "orders",
     // "results",
   ],
-  kassir: ["patients", "kassa", "results"],
-  lab_director: ["dashboard", "orders", "results"],
-  lab_asistant: ["dashboard", "results"],
+  kassir: ["patients", "kassa", "results", "ai-demo"],
+  lab_director: ["dashboard", "orders", "results", "ai-demo"],
+  lab_asistant: ["dashboard", "results", "ai-demo"],
 };
 
 /** Accept common spellings / casing from the API. */

@@ -276,8 +276,8 @@ export function deleteOrder(id: number) {
 }
 
 export type OrderTotalAmountRangeParams = {
-  startDate: string;
-  endDate: string;
+  startDate?: string;
+  endDate?: string;
   status?: string;
   payment_method?: string;
   payment_status?: string;
@@ -309,23 +309,27 @@ function normalizeTotalAmountRange(raw: unknown): OrderTotalAmountRange {
   };
 }
 
-/** Sana oralig'idagi buyurtmalar jami summasi va soni. */
+/** Buyurtmalar jami summasi va soni (sana / lab_id / filtrlarga qarab). */
 export async function getOrderTotalAmountRange(
-  params: OrderTotalAmountRangeParams,
+  params: OrderTotalAmountRangeParams = {},
 ): Promise<OrderTotalAmountRange> {
   const q = new URLSearchParams();
-  q.set("startDate", params.startDate);
-  q.set("endDate", params.endDate);
+  if (params.startDate?.trim()) q.set("startDate", params.startDate.trim());
+  if (params.endDate?.trim()) q.set("endDate", params.endDate.trim());
   if (params.status?.trim()) q.set("status", params.status.trim());
   if (params.payment_method?.trim()) q.set("payment_method", params.payment_method.trim());
   if (params.payment_status?.trim()) q.set("payment_status", params.payment_status.trim());
   if (params.search?.trim()) q.set("search", params.search.trim());
   if (params.lab_id != null) q.set("lab_id", String(params.lab_id));
 
-  const raw = await apiRequest<unknown>(`/order/totalamountrange?${q}`, {
-    method: "GET",
-    fallbackError: "Statistikani yuklab bo'lmadi",
-  });
+  const qs = q.toString();
+  const raw = await apiRequest<unknown>(
+    `/order/totalamountrange${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      fallbackError: "Statistikani yuklab bo'lmadi",
+    },
+  );
 
   return normalizeTotalAmountRange(raw);
 }
