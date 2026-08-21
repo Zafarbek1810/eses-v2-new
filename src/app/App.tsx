@@ -3,7 +3,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import {
   LayoutDashboard, Users, Settings as SettingsIcon, Settings, ChevronLeft, ChevronDown,
   Sun, Moon, Monitor, Globe, LogOut, User, Edit3, X, Check, ImageOff,
-  Bell, HelpCircle, UserPlus, Wallet, ClipboardList, FileBarChart2, Building2, MapPin,
+  Bell, HelpCircle, Phone, UserPlus, Wallet, ClipboardList, FileBarChart2, Building2, MapPin,
   Package, WalletCards, History, FlaskConical, TestTube2, FileType,
 } from "lucide-react";
 import {
@@ -273,6 +273,16 @@ const GlobalStyles = () => (
     .ses-glass-ui table {
       background-color: transparent;
     }
+    .dark .ses-sidebar-glass {
+      background-color: color-mix(in srgb, #0d221e 85%, transparent);
+      backdrop-filter: blur(14px) saturate(1.25);
+      -webkit-backdrop-filter: blur(14px) saturate(1.25);
+    }
+    .dark .ses-sidebar-glass.ses-sidebar-glass--photo {
+      background-color: color-mix(in srgb, #0d221e 65%, transparent);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    }
     .ses-overlay-panel {
       --card: #ffffff;
       --secondary: #e8efed;
@@ -302,10 +312,11 @@ type SidebarProps = {
   primaryColor: string;
   allowedNavIds: readonly string[];
   roleName?: string | null;
+  hasWallpaper?: boolean;
 };
 
 const Sidebar = ({
-  collapsed, onSidebarToggle, activeNav, onNavChange, primaryColor, allowedNavIds, roleName,
+  collapsed, onSidebarToggle, activeNav, onNavChange, primaryColor, allowedNavIds, roleName, hasWallpaper,
 }: SidebarProps) => {
   const [lang, setLang] = useState("Lotin");
   const langs = [
@@ -326,7 +337,7 @@ const Sidebar = ({
 
   return (
     <aside
-      className="relative flex flex-col h-full shrink-0 overflow-hidden bg-card border-r border-border"
+      className={`relative z-10 flex flex-col h-full shrink-0 overflow-hidden border-r border-border bg-card ses-sidebar-glass${hasWallpaper ? " ses-sidebar-glass--photo" : ""}`}
       style={{
         width: collapsed ? "84px" : "260px",
         transition: "width 0.28s cubic-bezier(0.4,0,0.2,1)",
@@ -429,13 +440,28 @@ const Sidebar = ({
                 ))}
               </div>
             </div>
-            <a
-              href="#"
-              className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl border border-border hover:bg-secondary/50 transition-colors group"
-            >
-              <HelpCircle className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-              <span className="text-muted-foreground text-xs group-hover:text-foreground transition-colors">Texnik yordam</span>
-            </a>
+            <div className="rounded-xl border border-border overflow-hidden">
+              <a
+                href="https://t.me/Ibadullayevich_Dilmurod"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2.5 px-2.5 py-2 hover:bg-secondary/50 transition-colors group"
+              >
+                <HelpCircle className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+                <span className="text-muted-foreground text-xs group-hover:text-foreground transition-colors">Texnik yordam</span>
+              </a>
+              <div className="border-t border-border" />
+              <a
+                href="tel:+998972215858"
+                className="flex items-center gap-2.5 px-2.5 py-2 hover:bg-secondary/50 transition-colors group"
+              >
+                <Phone className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-muted-foreground text-[10px] leading-tight group-hover:text-foreground transition-colors">Telefon raqam</div>
+                  <div className="text-foreground text-xs font-medium tracking-wide whitespace-nowrap">+998 97 221 58 58</div>
+                </div>
+              </a>
+            </div>
           </>
         ) : (
           <div className="flex flex-col items-center gap-1.5">
@@ -446,11 +472,20 @@ const Sidebar = ({
               <Globe className="w-4 h-4 text-muted-foreground" />
             </button>
             <a
-              href="#"
+              href="https://t.me/Ibadullayevich_Dilmurod"
+              target="_blank"
+              rel="noopener noreferrer"
               className="w-10 h-10 flex items-center justify-center rounded-xl border border-border hover:bg-secondary/60 transition-colors"
               title="Texnik yordam"
             >
               <HelpCircle className="w-4 h-4 text-muted-foreground" />
+            </a>
+            <a
+              href="tel:+998972215858"
+              className="w-10 h-10 flex items-center justify-center rounded-xl border border-border hover:bg-secondary/60 transition-colors"
+              title="+998 97 221 58 58"
+            >
+              <Phone className="w-4 h-4 text-muted-foreground" />
             </a>
           </div>
         )}
@@ -1283,7 +1318,17 @@ const Dashboard = ({
   };
 
   return (
-    <div className="flex h-screen overflow-hidden ses-app-bg">
+    <div className="relative flex h-screen overflow-hidden ses-app-bg">
+      {activeWallpaper && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden z-0" aria-hidden>
+          <img
+            src={activeWallpaper}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover scale-105"
+          />
+          <div className="absolute inset-0 bg-background/28 dark:bg-background/40" />
+        </div>
+      )}
       <Sidebar
         collapsed={collapsed}
         onSidebarToggle={() => setCollapsed(c => !c)}
@@ -1292,18 +1337,9 @@ const Dashboard = ({
         primaryColor={primaryColor}
         allowedNavIds={allowedNavIds}
         roleName={roleName}
+        hasWallpaper={Boolean(activeWallpaper)}
       />
-      <div className={`relative flex flex-col flex-1 overflow-hidden min-w-0 ses-glass-ui${activeWallpaper ? " ses-glass-ui--photo" : ""}`}>
-        {activeWallpaper && (
-          <div className="absolute inset-0 pointer-events-none overflow-hidden z-0" aria-hidden>
-            <img
-              src={activeWallpaper}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover scale-105"
-            />
-            <div className="absolute inset-0 bg-background/28 dark:bg-background/40" />
-          </div>
-        )}
+      <div className={`relative z-10 flex flex-col flex-1 overflow-hidden min-w-0 ses-glass-ui${activeWallpaper ? " ses-glass-ui--photo" : ""}`}>
         <DashboardParticles primaryColor={primaryColor} />
         <Header
           activeNav={activeNav}
