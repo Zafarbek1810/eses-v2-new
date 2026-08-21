@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
   FlaskConical, MessageSquare, Search, UserPlus, ClipboardList, Pencil,
-  RefreshCw, QrCode,
+  RefreshCw, QrCode, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from "lucide-react";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -30,6 +30,7 @@ const EMPTY_PATIENT_FILTER: PatientFilterForm = {
   phone: "",
 };
 
+const PATIENT_PER_PAGE = 10;
 const PHONE_PREFIX = "+998";
 
 function normalizeBirthDay(value: string): string {
@@ -682,8 +683,11 @@ export function OrderPage({
 
   const [patientFilter, setPatientFilter] = useState<PatientFilterForm>({ ...EMPTY_PATIENT_FILTER });
   const [patientMatches, setPatientMatches] = useState<Patient[]>([]);
+  const [patientPage, setPatientPage] = useState(1);
+  const [patientTotal, setPatientTotal] = useState(0);
   const [searchingPatients, setSearchingPatients] = useState(false);
   const [patientSearched, setPatientSearched] = useState(false);
+  const patientTotalPages = Math.max(1, Math.ceil(patientTotal / PATIENT_PER_PAGE));
 
   const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
@@ -791,48 +795,70 @@ export function OrderPage({
     setPatientFilter(f => ({ ...f, [k]: v }));
   };
 
-  const loadPatients = async (filter: PatientFilterForm = patientFilter) => {
+  const loadPatients = async (
+    filter: PatientFilterForm = patientFilter,
+    page = patientPage,
+  ) => {
     setSearchingPatients(true);
     setPatientSearched(true);
     try {
       const search = buildPatientSearchQuery(filter);
       const res = await getPatientsFull({
-        page: 1,
-        limit: 50,
+        page,
+        limit: PATIENT_PER_PAGE,
         ...(search ? { search } : {}),
       });
       const found = hasPatientFilter(filter)
         ? res.data.filter(p => matchesPatientFilter(p, filter))
         : res.data;
       setPatientMatches(found);
-      if (search && found.length === 0) pushToast("Bemor topilmadi", "info");
+      setPatientTotal(res.total);
+      setPatientPage(res.page);
+      if (search && found.length === 0 && page === 1) {
+        pushToast("Bemor topilmadi", "info");
+      }
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Bemorlarni yuklab bo'lmadi", "error");
       setPatientMatches([]);
+      setPatientTotal(0);
     } finally {
       setSearchingPatients(false);
     }
   };
 
   const handleSearchPatients = async () => {
-    await loadPatients(patientFilter);
+    setPatientPage(1);
+    await loadPatients(patientFilter, 1);
   };
 
   const clearPatientFilter = () => {
     const empty = { ...EMPTY_PATIENT_FILTER };
     setPatientFilter(empty);
-    void loadPatients(empty);
+    setPatientPage(1);
+    void loadPatients(empty, 1);
+  };
+
+  const goPatientPage = (nextPage: number) => {
+    const p = Math.min(patientTotalPages, Math.max(1, nextPage));
+    if (p === patientPage) {
+      void loadPatients(patientFilter, p);
+      return;
+    }
+    setPatientPage(p);
+    void loadPatients(patientFilter, p);
   };
 
   useEffect(() => {
     if (patientId != null) return;
-    void loadPatients(EMPTY_PATIENT_FILTER);
+    setPatientPage(1);
+    void loadPatients(EMPTY_PATIENT_FILTER, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial list when opening kassa without patient
   }, [patientId]);
 
   const clearPatient = () => {
     onPatientChange(null);
     setPatientFilter({ ...EMPTY_PATIENT_FILTER });
+    setPatientPage(1);
   };
 
   const existingKeys = useMemo(
@@ -1306,6 +1332,47 @@ export function OrderPage({
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-t border-border flex-wrap">
+            <p className="text-[12px] text-muted-foreground">
+              Jami: <span className="font-semibold text-foreground">{patientTotal}</span> ta · Sahifa{" "}
+              {patientPage}/{patientTotalPages}
+            </p>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={patientPage <= 1 || searchingPatients}
+                onClick={() => goPatientPage(1)}
+                className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                disabled={patientPage <= 1 || searchingPatients}
+                onClick={() => goPatientPage(patientPage - 1)}
+                className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                disabled={patientPage >= patientTotalPages || searchingPatients}
+                onClick={() => goPatientPage(patientPage + 1)}
+                className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                disabled={patientPage >= patientTotalPages || searchingPatients}
+                onClick={() => goPatientPage(patientTotalPages)}
+                className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </section>
       ) : loading ? (

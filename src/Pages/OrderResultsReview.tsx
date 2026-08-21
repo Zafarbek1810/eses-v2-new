@@ -24,12 +24,19 @@ import {
   type ResultRecord,
 } from "@/api/result";
 import { getStoredCompanyId, getStoredUser } from "@/api/session";
+import { getAllLaboratories } from "@/api/laboratory";
 import { ApiError } from "@/api/client";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
 import { printElementAsPdf } from "@/lib/pdfExport";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
 import { normalizeRoleName } from "@/lib/roles";
+import {
+  filterOrderItemsByLabScope,
+  orderItemInLabScope,
+  resolveUserLabScope,
+  type LabScope,
+} from "@/lib/labScope";
 import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
@@ -214,10 +221,25 @@ export function OrderResultsReview({
         : null;
       const role = normalizeRoleName(userDoc?.role?.name);
       const isAssistant = role === "lab_asistant";
+      const restrictToOwnLab = role === "lab_director" || role === "lab_asistant";
       const company = await resolveStoredCompanyDynamic();
 
+      let labScope: LabScope | null = null;
+      if (restrictToOwnLab && userDoc?.id) {
+        try {
+          const labs = await getAllLaboratories();
+          labScope = resolveUserLabScope(Array.isArray(labs) ? labs : [], userDoc.id);
+        } catch {
+          labScope = { labIds: new Set(), analysisIds: new Set() };
+        }
+      }
+
+      const orderItems = labScope
+        ? filterOrderItemsByLabScope(orderData.items as OrderItem[] | undefined, labScope)
+        : ((orderData.items ?? []) as OrderItem[]);
+
       const nextViews: AnalysisPdfView[] = [];
-      for (const item of (orderData.items ?? []) as OrderItem[]) {
+      for (const item of orderItems) {
         const analysisId = resolveOrderItemAnalysisId(item);
         if (!analysisId) continue;
         const analysisName = item.analysis?.name ?? `Analiz #${analysisId}`;
@@ -288,8 +310,27 @@ export function OrderResultsReview({
     if (!order || confirming) return;
     setConfirming(true);
     try {
-      const items = (order.items ?? []) as OrderItem[];
-      for (const item of items) {
+      const role = normalizeRoleName(getStoredUser()?.role?.name);
+      const restrictToOwnLab = role === "lab_director" || role === "lab_asistant";
+      let labScope: LabScope | null = null;
+      if (restrictToOwnLab) {
+        const userId = getStoredUser()?.id;
+        if (userId) {
+          try {
+            const labs = await getAllLaboratories();
+            labScope = resolveUserLabScope(Array.isArray(labs) ? labs : [], userId);
+          } catch {
+            labScope = null;
+          }
+        }
+      }
+
+      const allItems = (order.items ?? []) as OrderItem[];
+      const itemsToComplete = labScope
+        ? allItems.filter(item => orderItemInLabScope(item, labScope!))
+        : allItems;
+
+      for (const item of itemsToComplete) {
         const st = String(item.status || "");
         if (st !== "completed" && st !== "canceled") {
           await updateOrderItemStatus(item.id, "completed");
@@ -317,12 +358,20 @@ export function OrderResultsReview({
         smsOk = false;
       }
 
-      await updateOrderStatus(order.id, "completed");
+      const completedIds = new Set(itemsToComplete.map(i => i.id));
+      const allDone = allItems.every(item => {
+        if (completedIds.has(item.id)) return true;
+        const st = String(item.status || "");
+        return st === "completed" || st === "canceled";
+      });
+      await updateOrderStatus(order.id, allDone ? "completed" : "partially_completed");
 
-      const msg = smsOk
-        ? "Buyurtma yakunlandi. SMS yuborildi"
-        : "Buyurtma yakunlandi, lekin SMS yuborib bo'lmadi";
-      onConfirmed?.(msg, smsOk ? "success" : "info");
+      const msg = allDone
+        ? smsOk
+          ? "Buyurtma yakunlandi. SMS yuborildi"
+          : "Buyurtma yakunlandi, lekin SMS yuborib bo'lmadi"
+        : "Laboratoriya analizlari tasdiqlandi";
+      onConfirmed?.(msg, allDone && smsOk ? "success" : "info");
     } catch (err) {
       pushToast(
         err instanceof ApiError ? err.message : "Buyurtmani tasdiqlab bo'lmadi",

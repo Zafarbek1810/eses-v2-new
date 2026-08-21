@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Search, RefreshCw, Eye, Trash2, X, Loader2, CheckCircle, AlertCircle,
   ClipboardList, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
@@ -9,24 +9,30 @@ import {
   getAllOrders,
   deleteOrder,
   type Order,
+  type OrderItem,
   type OrderStatus,
 } from "@/api/order";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
+import { getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import {
   ORDER_STATUS_LABELS,
   statusLabel,
 } from "@/lib/orderStatus";
+import { normalizeRoleName } from "@/lib/roles";
+import {
+  filterOrderItemsByLabScope,
+  orderTouchesLabScope,
+  resolveUserLabScope,
+  type LabScope,
+} from "@/lib/labScope";
 import { OrderResultsReview } from "@/Pages/OrderResultsReview";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" | "info" };
 
 const PER_PAGE = 10;
 
-// comment
-// comment
-// comment
 const ORDER_STATUSES = (
   Object.entries(ORDER_STATUS_LABELS) as [OrderStatus, string][]
 ).map(([value, label]) => ({ value, label }));
@@ -63,8 +69,13 @@ function patientName(order: Order) {
   return `${p.last_name ?? ""} ${p.first_name ?? ""}`.trim() || "—";
 }
 
-function orderAnalyses(order: Order) {
-  const items = order.items ?? [];
+function orderAnalyses(
+  order: Order,
+  scope: LabScope | null,
+) {
+  const items = scope
+    ? filterOrderItemsByLabScope(order.items as OrderItem[] | undefined, scope)
+    : (order.items ?? []);
   if (items.length === 0) return [] as { name: string; lab: string; status: string }[];
   return items.map(item => ({
     name: item.analysis?.name ?? item.analysis?.shortname ?? "—",
@@ -74,6 +85,9 @@ function orderAnalyses(order: Order) {
 }
 
 export function OrdersPage({ primaryColor }: { primaryColor: string }) {
+  const role = normalizeRoleName(getStoredUser()?.role?.name);
+  const restrictToOwnLab = role === "lab_director" || role === "lab_asistant";
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -91,6 +105,9 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
   const [deleting, setDeleting] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
 
+  const labScopeRef = useRef<LabScope | null>(null);
+  const [labScopeReady, setLabScopeReady] = useState(!restrictToOwnLab);
+
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
@@ -98,7 +115,40 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
     setToasts(t => [...t, { id, text, type }]);
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
   };
-// nagap
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const labs = await getAllLaboratories();
+        const list = Array.isArray(labs) ? labs : [];
+        setLaboratories(list);
+
+        if (!restrictToOwnLab) {
+          labScopeRef.current = null;
+          setLabScopeReady(true);
+          return;
+        }
+
+        const userId = getStoredUser()?.id;
+        if (!userId) {
+          labScopeRef.current = { labIds: new Set(), analysisIds: new Set() };
+          setLabScopeReady(true);
+          return;
+        }
+
+        const scope = resolveUserLabScope(list, userId);
+        labScopeRef.current = scope;
+        setLabScopeReady(true);
+      } catch {
+        setLaboratories([]);
+        if (restrictToOwnLab) {
+          labScopeRef.current = { labIds: new Set(), analysisIds: new Set() };
+        }
+        setLabScopeReady(true);
+      }
+    })();
+  }, [restrictToOwnLab]);
+
   const loadOrders = async (opts?: {
     page?: number;
     search?: string;
@@ -109,25 +159,38 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
     const s = opts?.search ?? search;
     const st = opts?.status ?? statusFilter;
     const lab = opts?.lab_id !== undefined ? opts.lab_id : labId;
+    const scope = restrictToOwnLab ? labScopeRef.current : null;
 
     setLoading(true);
     setError(null);
     try {
-      const res = await getOrdersFull({
-        page: p,
-        limit: PER_PAGE,
-        search: s || undefined,
-        status: st || undefined,
-        lab_id: lab === "" ? undefined : lab,
-      });
-      setOrders(res.data);
-      setTotal(res.total);
-      setPage(res.page);
-    } catch (err) {
-      // Fallback: getfull yo'q yoki lab path farq qilsa getall
-      try {
-        const all = await getAllOrders();
+      if (restrictToOwnLab && (!scope || scope.labIds.size === 0)) {
+        setOrders([]);
+        setTotal(0);
+        return;
+      }
+
+      // Backend /order/getfull/labid?lab_id=... 500 — lab filtri clientda
+      if (scope || lab !== "") {
+        const all = await getAllOrders().catch(async () => {
+          const res = await getOrdersFull({
+            page: 1,
+            limit: 500,
+            search: s || undefined,
+            status: st || undefined,
+          });
+          return res.data;
+        });
         let list = Array.isArray(all) ? all : [];
+
+        if (scope) {
+          list = list.filter(o => orderTouchesLabScope(o, scope));
+        } else if (lab !== "") {
+          list = list.filter(o =>
+            (o.items ?? []).some(i => i.laboratory?.id === lab),
+          );
+        }
+
         if (s.trim()) {
           const q = s.trim().toLowerCase();
           list = list.filter(o => {
@@ -137,7 +200,41 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
           });
         }
         if (st) list = list.filter(o => String(o.status) === st);
-        if (lab !== "") {
+
+        const totalCount = list.length;
+        const totalPagesCount = Math.max(1, Math.ceil(totalCount / PER_PAGE));
+        const safePage = Math.min(Math.max(1, p), totalPagesCount);
+        const start = (safePage - 1) * PER_PAGE;
+        setOrders(list.slice(start, start + PER_PAGE));
+        setTotal(totalCount);
+        setPage(safePage);
+        return;
+      }
+
+      const res = await getOrdersFull({
+        page: p,
+        limit: PER_PAGE,
+        search: s || undefined,
+        status: st || undefined,
+      });
+      setOrders(res.data);
+      setTotal(res.total);
+      setPage(res.page);
+    } catch (err) {
+      try {
+        const all = await getAllOrders();
+        let list = Array.isArray(all) ? all : [];
+        if (scope) list = list.filter(o => orderTouchesLabScope(o, scope));
+        if (s.trim()) {
+          const q = s.trim().toLowerCase();
+          list = list.filter(o => {
+            const name = patientName(o).toLowerCase();
+            const phone = (o.patient?.phone ?? "").toLowerCase();
+            return name.includes(q) || phone.includes(q) || String(o.id).includes(q);
+          });
+        }
+        if (st) list = list.filter(o => String(o.status) === st);
+        if (!scope && lab !== "") {
           list = list.filter(o =>
             (o.items ?? []).some(i => i.laboratory?.id === lab),
           );
@@ -164,20 +261,10 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
   };
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const labs = await getAllLaboratories();
-        setLaboratories(Array.isArray(labs) ? labs : []);
-      } catch {
-        setLaboratories([]);
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
+    if (!labScopeReady) return;
     void loadOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search, statusFilter, labId]);
+  }, [page, search, statusFilter, labId, labScopeReady]);
 
   const applySearch = () => {
     setPage(1);
@@ -201,6 +288,10 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
       setDeleting(false);
     }
   };
+
+  const visibleLabs = restrictToOwnLab
+    ? laboratories.filter(l => labScopeRef.current?.labIds.has(l.id))
+    : laboratories;
 
   if (detailId != null) {
     return (
@@ -255,7 +346,9 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
           <div className="mr-auto min-w-0">
             <h2 className="text-[15px] font-semibold text-foreground">Buyurtmalar</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Barcha orderlar ro&apos;yxati va holatlari
+              {restrictToOwnLab
+                ? "O'z laboratoriyangiz buyurtmalari"
+                : "Barcha orderlar ro'yxati va holatlari"}
             </p>
           </div>
 
@@ -300,19 +393,21 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
             ))}
           </select>
 
-          <select
-            value={labId === "" ? "" : String(labId)}
-            onChange={e => {
-              setPage(1);
-              setLabId(e.target.value ? Number(e.target.value) : "");
-            }}
-            className="bg-secondary border border-border rounded-xl px-3 py-2.5 text-[13px] text-foreground focus:outline-none max-w-[180px]"
-          >
-            <option value="">Barcha lablar</option>
-            {laboratories.map(l => (
-              <option key={l.id} value={l.id}>{l.name}</option>
-            ))}
-          </select>
+          {!restrictToOwnLab && (
+            <select
+              value={labId === "" ? "" : String(labId)}
+              onChange={e => {
+                setPage(1);
+                setLabId(e.target.value ? Number(e.target.value) : "");
+              }}
+              className="bg-secondary border border-border rounded-xl px-3 py-2.5 text-[13px] text-foreground focus:outline-none max-w-[180px]"
+            >
+              <option value="">Barcha lablar</option>
+              {visibleLabs.map(l => (
+                <option key={l.id} value={l.id}>{l.name}</option>
+              ))}
+            </select>
+          )}
 
           <button
             type="button"
@@ -365,7 +460,7 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
                 </tr>
               ) : (
                 orders.map(order => {
-                  const analyses = orderAnalyses(order);
+                  const analyses = orderAnalyses(order, labScopeRef.current);
                   return (
                   <tr
                     key={order.id}

@@ -1,11 +1,13 @@
 import * as React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   Search, RefreshCw, FileBarChart2, X, Loader2, CheckCircle, AlertCircle,
   ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut, Printer, Eye, QrCode,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from "lucide-react";
 import {
+  getOrdersFull,
   getAllOrders,
   getOrderById,
   resolveOrderItemAnalysisId,
@@ -27,10 +29,16 @@ import {
 } from "@/api/result";
 import { getStoredUser } from "@/api/auth";
 import { getStoredCompanyId } from "@/api/session";
+import { getAllLaboratories } from "@/api/laboratory";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
 import { normalizeRoleName } from "@/lib/roles";
+import {
+  matchesLabScope,
+  resolveUserLabScope,
+  type LabScope,
+} from "@/lib/labScope";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
 import {
   ReceiptModal,
@@ -58,6 +66,8 @@ import {
 } from "@/lib/pdfTemplate";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
+
+const PER_PAGE = 10;
 
 type ReceiptView = {
   patient: ReceiptPatient;
@@ -118,6 +128,14 @@ function statusBadgeClass(status?: string) {
     default:
       return "bg-secondary text-muted-foreground";
   }
+}
+
+function filterRowsByLabScope(
+  rows: OrderAnalysisRow[],
+  scope: LabScope,
+): OrderAnalysisRow[] {
+  if (scope.labIds.size === 0 && scope.analysisIds.size === 0) return [];
+  return rows.filter(r => matchesLabScope(r.laboratoryId, r.analysisId, scope));
 }
 
 function flattenOrderAnalyses(
@@ -276,13 +294,18 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const role = normalizeRoleName(getStoredUser()?.role?.name);
   const isKassir = role === "kassir";
   const canEditResults = !isKassir;
+  const restrictToOwnLab = role === "lab_director" || role === "lab_asistant";
 
   const [rows, setRows] = useState<OrderAnalysisRow[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [resultsCache, setResultsCache] = useState<ResultRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
+  const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
   const [selected, setSelected] = useState<OrderAnalysisRow | null>(null);
   const [qrLoadingKey, setQrLoadingKey] = useState<string | null>(null);
   const [receiptView, setReceiptView] = useState<ReceiptView | null>(null);
@@ -297,6 +320,8 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [opening, setOpening] = useState(false);
   const [pdfZoom, setPdfZoom] = useState(PDF_ZOOM_DEFAULT);
   const pdfRef = useRef<HTMLDivElement>(null);
+  const labScopeRef = useRef<LabScope | null>(null);
+  const [labScopeReady, setLabScopeReady] = useState(!restrictToOwnLab);
 
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
     const id = Date.now();
@@ -304,49 +329,136 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3200);
   };
 
-  const load = async () => {
+  useEffect(() => {
+    if (!restrictToOwnLab) {
+      labScopeRef.current = null;
+      setLabScopeReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    setLabScopeReady(false);
+
+    void (async () => {
+      const userId = getStoredUser()?.id;
+      if (!userId) {
+        if (!cancelled) {
+          labScopeRef.current = { labIds: new Set(), analysisIds: new Set() };
+          setLabScopeReady(true);
+        }
+        return;
+      }
+      try {
+        const labs = await getAllLaboratories();
+        if (cancelled) return;
+        labScopeRef.current = resolveUserLabScope(
+          Array.isArray(labs) ? labs : [],
+          userId,
+        );
+      } catch {
+        if (!cancelled) {
+          labScopeRef.current = { labIds: new Set(), analysisIds: new Set() };
+        }
+      } finally {
+        if (!cancelled) setLabScopeReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [restrictToOwnLab]);
+
+  const load = async (opts?: { page?: number; search?: string }) => {
+    const p = opts?.page ?? page;
+    const s = opts?.search ?? search;
     setLoading(true);
     try {
-      const [ordersRaw, results] = await Promise.all([
-        getAllOrders(),
-        getAllResults().catch(() => [] as ResultRecord[]),
-      ]);
-      const orders = Array.isArray(ordersRaw)
-        ? ordersRaw
-        : ((ordersRaw as { data?: Order[]; orders?: Order[] })?.data ??
-          (ordersRaw as { orders?: Order[] })?.orders ??
-          []);
+      const scope = restrictToOwnLab ? labScopeRef.current : null;
+      if (restrictToOwnLab && (!scope || scope.labIds.size === 0)) {
+        setResultsCache([]);
+        setOrders([]);
+        setRows([]);
+        setTotal(0);
+        return;
+      }
+
+      const results = await getAllResults().catch(() => [] as ResultRecord[]);
+
+      // Backend /order/getfull/labid?lab_id=... 500 — lab filtri clientda
+      if (scope) {
+        const all = await getAllOrders().catch(async () => {
+          const res = await getOrdersFull({ page: 1, limit: 500, search: s.trim() || undefined });
+          return res.data;
+        });
+        let list = Array.isArray(all) ? all : [];
+        let nextRows = filterRowsByLabScope(flattenOrderAnalyses(list, results), scope);
+
+        const q = s.trim().toLowerCase();
+        if (q) {
+          nextRows = nextRows.filter(r => {
+            const hay = [
+              String(r.orderId),
+              r.patientName,
+              r.analysisName,
+              r.laboratoryName,
+              r.itemStatus,
+            ]
+              .join(" ")
+              .toLowerCase();
+            return hay.includes(q);
+          });
+        }
+
+        const totalCount = nextRows.length;
+        const totalPagesCount = Math.max(1, Math.ceil(totalCount / PER_PAGE));
+        const safePage = Math.min(Math.max(1, p), totalPagesCount);
+        const start = (safePage - 1) * PER_PAGE;
+
+        setResultsCache(results);
+        setOrders(list);
+        setRows(nextRows.slice(start, start + PER_PAGE));
+        setTotal(totalCount);
+        setPage(safePage);
+        return;
+      }
+
+      const ordersRes = await getOrdersFull({
+        page: p,
+        limit: PER_PAGE,
+        search: s.trim() || undefined,
+      });
+      const list = Array.isArray(ordersRes.data) ? ordersRes.data : [];
       setResultsCache(results);
-      setOrders(orders);
-      setRows(flattenOrderAnalyses(orders, results));
+      setOrders(list);
+      setRows(flattenOrderAnalyses(list, results));
+      setTotal(ordersRes.total);
+      setPage(ordersRes.page);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Yuklab bo'lmadi", "error");
+      setRows([]);
+      setOrders([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!labScopeReady) return;
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, search, labScopeReady]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(r => {
-      const hay = [
-        String(r.orderId),
-        String(r.orderItemId),
-        r.patientName,
-        r.analysisName,
-        r.laboratoryName,
-        r.itemStatus,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [rows, search]);
+  const applySearch = () => {
+    setPage(1);
+    setSearch(searchInput.trim());
+  };
+
+  const goPage = (next: number) => {
+    const p = Math.min(totalPages, Math.max(1, next));
+    setPage(p);
+  };
 
   const openRow = async (row: OrderAnalysisRow) => {
     setOpening(true);
@@ -444,10 +556,17 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
 
       const templates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() => [] as PdfTemplate[]);
       const orderItems = (order.items ?? []) as OrderItem[];
+      const scope = restrictToOwnLab ? labScopeRef.current : null;
       const cartItems: ReceiptCartItem[] = orderItems
         .map(item => {
           const analysisId = resolveOrderItemAnalysisId(item);
           if (!analysisId) return null;
+          if (scope) {
+            const labId = item.laboratory?.id ?? null;
+            const inLab = labId != null && scope.labIds.has(labId);
+            const inAnalysis = scope.analysisIds.has(analysisId);
+            if (!inLab && !inAnalysis) return null;
+          }
           return {
             key: `${order.id}-${item.id}`,
             analysis_id: analysisId,
@@ -896,21 +1015,35 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         <div className="relative flex-1 min-w-[220px] max-w-md">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applySearch();
+              }
+            }}
             placeholder="Qidirish: bemor, analiz, buyurtma..."
             className="w-full bg-secondary border border-border rounded-xl pl-9 pr-3 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]"
           />
         </div>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => {
+            const next = searchInput.trim();
+            if (next !== search) {
+              setPage(1);
+              setSearch(next);
+            } else {
+              void load({ page, search: next });
+            }
+          }}
           className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-secondary text-[12px] font-semibold text-foreground"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Yangilash
         </button>
         <div className="text-[12px] text-muted-foreground ml-auto">
-          Jami analizlar: <span className="font-semibold text-foreground">{filtered.length}</span>
+          Jami: <span className="font-semibold text-foreground">{total}</span> ta · Sahifa {page}/{totalPages}
         </div>
       </div>
 
@@ -931,7 +1064,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           <div className="flex items-center justify-center py-16 text-muted-foreground gap-2 text-[13px]">
             <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
           </div>
-        ) : filtered.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="py-16 text-center text-[13px] text-muted-foreground">
             Buyurtmalarda analiz topilmadi
           </div>
@@ -951,7 +1084,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(r => (
+                {rows.map(r => (
                   <tr
                     key={r.key}
                     onClick={() => void openRow(r)}
@@ -1006,6 +1139,46 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
             </table>
           </div>
         )}
+
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-t border-border flex-wrap">
+          <p className="text-[12px] text-muted-foreground">
+            Jami: <span className="font-semibold text-foreground">{total}</span> ta · Sahifa {page}/{totalPages}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => goPage(1)}
+              className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => goPage(page - 1)}
+              className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages || loading}
+              onClick={() => goPage(page + 1)}
+              className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages || loading}
+              onClick={() => goPage(totalPages)}
+              className="p-2 rounded-lg border border-border text-muted-foreground hover:bg-secondary disabled:opacity-40"
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
       <ToastStack toasts={toasts} setToasts={setToasts} />

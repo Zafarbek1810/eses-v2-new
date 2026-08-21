@@ -45,9 +45,9 @@ export function getPublicAppOrigin(): string {
 
 /**
  * URL dan parametrlarni o'qish:
- * - /showresult/1/2/3  (asosiy)
- * - #/showresult/1/2/3
- * - ?orderId&analysisId&storageId (eski / fallback)
+ * - #/showresult/1/2/3  (production — Apache rewrite kerak emas)
+ * - /showresult/1/2/3   (local Vite / rewrite bo'lsa)
+ * - ?orderId&analysisId&storageId
  */
 export function parseShowResultParams(
   pathname = typeof window !== "undefined" ? window.location.pathname : "",
@@ -57,14 +57,15 @@ export function parseShowResultParams(
   const path = pathname.replace(/\/+$/, "") || "/";
   const hashPath = pathFromHash(hash).replace(/\/+$/, "") || "";
 
-  const pathMatch = path.match(/^\/showresult\/(\d+)\/(\d+)\/(\d+)$/i);
-  if (pathMatch) {
-    return paramsFromTriple(pathMatch[1], pathMatch[2], pathMatch[3]);
-  }
-
+  // Hash birinchi — production SMS/QR shu formatda
   const hashMatch = hashPath.match(/^\/showresult\/(\d+)\/(\d+)\/(\d+)$/i);
   if (hashMatch) {
     return paramsFromTriple(hashMatch[1], hashMatch[2], hashMatch[3]);
+  }
+
+  const pathMatch = path.match(/^\/showresult\/(\d+)\/(\d+)\/(\d+)$/i);
+  if (pathMatch) {
+    return paramsFromTriple(pathMatch[1], pathMatch[2], pathMatch[3]);
   }
 
   const q = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
@@ -87,31 +88,35 @@ export function isShowResultRoute(
   search = typeof window !== "undefined" ? window.location.search : "",
   hash = typeof window !== "undefined" ? window.location.hash : "",
 ): boolean {
-  const path = pathname.replace(/\/+$/, "") || "/";
-  if (/^\/showresult(\/|$)/i.test(path)) return true;
-
   const hashPath = pathFromHash(hash).replace(/\/+$/, "") || "";
   if (/^\/showresult(\/|$)/i.test(hashPath)) return true;
+
+  const path = pathname.replace(/\/+$/, "") || "/";
+  if (/^\/showresult(\/|$)/i.test(path)) return true;
 
   return parseShowResultParams(pathname, search, hash) != null;
 }
 
-/** PIN: /showresult/137/22/26 → "1372226" */
+/** PIN: IDlar birlashmasi → "1372226" */
 export function buildShowResultPin(params: ShowResultParams): string {
   return `${params.orderId}${params.analysisId}${params.storageId}`;
 }
 
-/** Relativ path: /showresult/{orderId}/{analysisId}/{storageId} */
+/** Relativ path (hash ichida ham shu): /showresult/{orderId}/{analysisId}/{storageId} */
 export function buildShowResultPath(params: ShowResultParams): string {
   const { orderId, analysisId, storageId } = params;
   return `${SHOW_RESULT_PREFIX}/${orderId}/${analysisId}/${storageId}`;
 }
 
-/** To'liq ochiladigan URL (SMS / QR) — path ko'rinishi */
+/**
+ * SMS / QR URL.
+ * Hash ishlatiladi: https://eses.uz/#/showresult/213/45/44
+ * Server faqat / ni ko'radi → 404 yo'q (Apache rewrite shart emas).
+ */
 export function buildShowResultUrl(
   params: ShowResultParams,
   origin = getPublicAppOrigin(),
 ): string {
   const base = origin.replace(/\/$/, "");
-  return `${base}${buildShowResultPath(params)}`;
+  return `${base}/#${buildShowResultPath(params)}`;
 }

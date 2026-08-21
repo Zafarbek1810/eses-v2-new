@@ -132,7 +132,7 @@ export type OrderUpdatePayload = Partial<{
   payment_status: PaymentStatus;
   payment_sms: boolean;
   completed_sms: boolean;
-  /** SMS dagi natija PDF havolasi (public /showresult/...) */
+  /** SMS dagi natija PDF havolasi (public /#/showresult/...) */
   result_link_sms: string;
 }>;
 
