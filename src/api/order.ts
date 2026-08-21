@@ -274,3 +274,58 @@ export function deleteOrder(id: number) {
     fallbackError: "Buyurtmani o'chirib bo'lmadi",
   });
 }
+
+export type OrderTotalAmountRangeParams = {
+  startDate: string;
+  endDate: string;
+  status?: string;
+  payment_method?: string;
+  payment_status?: string;
+  search?: string;
+  lab_id?: number;
+};
+
+export type OrderTotalAmountRange = {
+  totalFinalAmount: number;
+  count: number;
+};
+
+function normalizeTotalAmountRange(raw: unknown): OrderTotalAmountRange {
+  const obj =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const nested =
+    obj.data && typeof obj.data === "object"
+      ? (obj.data as Record<string, unknown>)
+      : obj;
+
+  const amount = Number(
+    nested.totalFinalAmount ?? nested.total_final_amount ?? nested.totalAmount ?? 0,
+  );
+  const count = Number(nested.count ?? nested.totalCount ?? nested.total ?? 0);
+
+  return {
+    totalFinalAmount: Number.isFinite(amount) ? amount : 0,
+    count: Number.isFinite(count) ? count : 0,
+  };
+}
+
+/** Sana oralig'idagi buyurtmalar jami summasi va soni. */
+export async function getOrderTotalAmountRange(
+  params: OrderTotalAmountRangeParams,
+): Promise<OrderTotalAmountRange> {
+  const q = new URLSearchParams();
+  q.set("startDate", params.startDate);
+  q.set("endDate", params.endDate);
+  if (params.status?.trim()) q.set("status", params.status.trim());
+  if (params.payment_method?.trim()) q.set("payment_method", params.payment_method.trim());
+  if (params.payment_status?.trim()) q.set("payment_status", params.payment_status.trim());
+  if (params.search?.trim()) q.set("search", params.search.trim());
+  if (params.lab_id != null) q.set("lab_id", String(params.lab_id));
+
+  const raw = await apiRequest<unknown>(`/order/totalamountrange?${q}`, {
+    method: "GET",
+    fallbackError: "Statistikani yuklab bo'lmadi",
+  });
+
+  return normalizeTotalAmountRange(raw);
+}

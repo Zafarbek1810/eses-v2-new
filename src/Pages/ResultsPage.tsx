@@ -862,7 +862,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               </>
             )}
           </div>
-          {canEditResults ? (
+          {canEditResults && (
             <>
               <button
                 type="button"
@@ -892,22 +892,25 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                 Yuklab olish
               </button>
             </>
-          ) : (
-            <button
-              type="button"
-              disabled={printing || !hasTable || opening}
-              onClick={() => void handlePrintPdf()}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
-              style={{ background: primaryColor }}
-            >
-              {printing ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Printer className="w-3.5 h-3.5" />
-              )}
-              Chop etish
-            </button>
           )}
+          <button
+            type="button"
+            disabled={printing || !hasTable || opening || saving || downloading}
+            onClick={() => void handlePrintPdf()}
+            className={
+              canEditResults
+                ? "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-secondary text-[12px] font-semibold text-foreground border border-border hover:opacity-90 disabled:opacity-50"
+                : "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
+            }
+            style={canEditResults ? undefined : { background: primaryColor }}
+          >
+            {printing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Printer className="w-3.5 h-3.5" />
+            )}
+            Chop etish
+          </button>
         </div>
 
         {opening ? (

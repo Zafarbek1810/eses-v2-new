@@ -1,13 +1,26 @@
 import * as React from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FileText, ClipboardCheck, Award, Building2,
   Users, Archive, Plus, Download, RefreshCw, CheckCircle,
   ArrowUpRight, ArrowDownRight, Info, AlertCircle, Filter, Calendar,
+  Wallet, ClipboardList, Banknote, Clock3, Loader2, ChevronDown,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from "recharts";
+import { format } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import { getOrderTotalAmountRange, type OrderTotalAmountRange } from "@/api/order";
+import { getStoredUser } from "@/api/session";
+import { normalizeRoleName } from "@/lib/roles";
+import { Calendar as DatePickerCalendar } from "@/app/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/app/components/ui/popover";
 
 const TREND_DATA = [
   { month: "Jan", applications: 245, inspections: 89 },
@@ -42,6 +55,71 @@ const ANNOUNCEMENTS = [
   { id: 3, title: "Q2 Report Available", desc: "Quarterly inspection report for Q2 2024 is now available", type: "success", date: "20 Jul" },
 ];
 
+function formatSom(value: number) {
+  return `${Math.round(value).toLocaleString("uz-UZ")} so'm`;
+}
+
+function toIsoDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function parseIsoDate(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatDisplayDate(s: string) {
+  return format(parseIsoDate(s), "dd.MM.yyyy");
+}
+
+/** Joriy oyning 1-kunidan bugungi kungacha. */
+function currentMonthRange() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { startDate: toIsoDate(start), endDate: toIsoDate(now) };
+}
+
+const emptyRange = (): OrderTotalAmountRange => ({ totalFinalAmount: 0, count: 0 });
+
+const DATE_PRESETS = [
+  {
+    id: "today",
+    label: "Bugun",
+    range: () => {
+      const d = toIsoDate(new Date());
+      return { startDate: d, endDate: d };
+    },
+  },
+  {
+    id: "7d",
+    label: "7 kun",
+    range: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 6);
+      return { startDate: toIsoDate(start), endDate: toIsoDate(end) };
+    },
+  },
+  {
+    id: "30d",
+    label: "30 kun",
+    range: () => {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 29);
+      return { startDate: toIsoDate(start), endDate: toIsoDate(end) };
+    },
+  },
+  {
+    id: "month",
+    label: "Bu oy",
+    range: currentMonthRange,
+  },
+] as const;
+
 const StatusBadge = ({ status }: { status: string }) => {
   const MAP: Record<string, string> = {
     Pending:   "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
@@ -60,32 +138,109 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 type StatCardProps = {
   label: string; value: string; description: string;
-  icon: React.ElementType; trend: number;
+  icon: React.ElementType; trend?: number;
   iconBg: string; iconColor: string; primaryColor: string;
+  loading?: boolean;
 };
 
-const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconColor }: StatCardProps) => (
+const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconColor, loading }: StatCardProps) => (
   <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] hover:shadow-[0_8px_24px_rgba(12,31,28,0.07)] hover:-translate-y-0.5 transition-all duration-200 group cursor-default">
     <div className="flex items-start justify-between mb-4">
       <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: iconBg }}>
         <Icon className="w-[18px] h-[18px]" style={{ color: iconColor }} />
       </div>
-      <div className={`flex items-center gap-0.5 text-[11px] font-bold ${trend >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-        {trend >= 0
-          ? <ArrowUpRight className="w-3.5 h-3.5" />
-          : <ArrowDownRight className="w-3.5 h-3.5" />
-        }
-        {Math.abs(trend)}%
-      </div>
+      {trend != null && (
+        <div className={`flex items-center gap-0.5 text-[11px] font-bold ${trend >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+          {trend >= 0
+            ? <ArrowUpRight className="w-3.5 h-3.5" />
+            : <ArrowDownRight className="w-3.5 h-3.5" />
+          }
+          {Math.abs(trend)}%
+        </div>
+      )}
     </div>
-    <div className="text-[28px] font-extrabold text-foreground leading-none mb-1.5 tracking-tight">{value}</div>
+    <div className="text-[28px] font-extrabold text-foreground leading-none mb-1.5 tracking-tight">
+      {loading ? (
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      ) : (
+        value
+      )}
+    </div>
     <div className="text-[13px] font-semibold text-foreground mb-0.5">{label}</div>
     <div className="text-[11px] text-muted-foreground">{description}</div>
   </div>
 );
 
 export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
-  const stats = [
+  const role = normalizeRoleName(getStoredUser()?.role?.name);
+  const isLabStatsRole =
+    role === "lab_director" || role === "lab_asistant" || role === "director";
+
+  const initialRange = useMemo(() => currentMonthRange(), []);
+  const [startDate, setStartDate] = useState(initialRange.startDate);
+  const [endDate, setEndDate] = useState(initialRange.endDate);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const [labStatsLoading, setLabStatsLoading] = useState(isLabStatsRole);
+  const [labAll, setLabAll] = useState<OrderTotalAmountRange>(emptyRange);
+  const [labPaid, setLabPaid] = useState<OrderTotalAmountRange>(emptyRange);
+  const [labPending, setLabPending] = useState<OrderTotalAmountRange>(emptyRange);
+
+  const selectedRange: DateRange = {
+    from: parseIsoDate(startDate),
+    to: parseIsoDate(endDate),
+  };
+
+  const rangeLabel = `${formatDisplayDate(startDate)} — ${formatDisplayDate(endDate)}`;
+
+  const applyRange = (next: { startDate: string; endDate: string }) => {
+    const start = next.startDate <= next.endDate ? next.startDate : next.endDate;
+    const end = next.startDate <= next.endDate ? next.endDate : next.startDate;
+    setStartDate(start);
+    setEndDate(end);
+  };
+
+  const onCalendarSelect = (range: DateRange | undefined) => {
+    if (!range?.from) return;
+    const from = toIsoDate(range.from);
+    const to = range.to ? toIsoDate(range.to) : from;
+    applyRange({ startDate: from, endDate: to });
+    if (range.from && range.to) setPickerOpen(false);
+  };
+
+  useEffect(() => {
+    if (!isLabStatsRole) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      setLabStatsLoading(true);
+      try {
+        const [all, paid, pendingPay] = await Promise.all([
+          getOrderTotalAmountRange({ startDate, endDate }),
+          getOrderTotalAmountRange({ startDate, endDate, payment_status: "paid" }),
+          getOrderTotalAmountRange({ startDate, endDate, payment_status: "pending" }),
+        ]);
+        if (cancelled) return;
+        setLabAll(all);
+        setLabPaid(paid);
+        setLabPending(pendingPay);
+      } catch {
+        if (cancelled) return;
+        setLabAll(emptyRange());
+        setLabPaid(emptyRange());
+        setLabPending(emptyRange());
+      } finally {
+        if (!cancelled) setLabStatsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLabStatsRole, startDate, endDate]);
+
+  const defaultStats = [
     {
       label: "Total Applications", value: "1,842", description: "↑ 12.4% vs last month",
       icon: FileText, trend: 12.4,
@@ -108,6 +263,47 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     },
   ];
 
+  const labStats = [
+    {
+      label: "Jami summa",
+      value: formatSom(labAll.totalFinalAmount),
+      description: `${rangeLabel} · ${labAll.count} ta buyurtma`,
+      icon: Wallet,
+      iconBg: `${primaryColor}14`,
+      iconColor: primaryColor,
+      loading: labStatsLoading,
+    },
+    {
+      label: "Buyurtmalar",
+      value: labAll.count.toLocaleString("uz-UZ"),
+      description: "Tanlangan oraliq bo'yicha",
+      icon: ClipboardList,
+      iconBg: "#ECFDF5",
+      iconColor: "#059669",
+      loading: labStatsLoading,
+    },
+    {
+      label: "To'langan",
+      value: formatSom(labPaid.totalFinalAmount),
+      description: `${labPaid.count} ta to'langan buyurtma`,
+      icon: Banknote,
+      iconBg: "#ECFEFF",
+      iconColor: "#0E7490",
+      loading: labStatsLoading,
+    },
+    {
+      label: "Kutilmoqda",
+      value: formatSom(labPending.totalFinalAmount),
+      description: `${labPending.count} ta to'lov kutilmoqda`,
+      icon: Clock3,
+      iconBg: "#FFFBEB",
+      iconColor: "#D97706",
+      loading: labStatsLoading,
+    },
+  ];
+
+  const stats = isLabStatsRole ? labStats : defaultStats;
+
   const customTooltipStyle = {
     borderRadius: "10px",
     border: "1px solid var(--border)",
@@ -119,6 +315,61 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar animate-fade-in">
+      {isLabStatsRole && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[15px] font-bold text-foreground tracking-tight">Statistika</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Sana oralig‘ini tanlang</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+              {DATE_PRESETS.map(preset => {
+                const r = preset.range();
+                const active = r.startDate === startDate && r.endDate === endDate;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyRange(r)}
+                    className={`px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-colors ${
+                      active
+                        ? "text-white shadow-sm"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    }`}
+                    style={active ? { background: primaryColor } : undefined}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-[12px] font-semibold text-foreground hover:bg-secondary/60 transition-colors"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span>{rangeLabel}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <DatePickerCalendar
+                  mode="range"
+                  numberOfMonths={2}
+                  selected={selectedRange}
+                  onSelect={onCalendarSelect}
+                  defaultMonth={parseIsoDate(startDate)}
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {stats.map((s, i) => (
           <StatCard key={i} {...s} primaryColor={primaryColor} />
