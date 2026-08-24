@@ -19,21 +19,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = (env.VITE_API_BASE_URL || 'https://eses.uz/api').replace(/\/$/, '')
 
-  const proxyPaths = ['/user', '/role', '/laboratory', '/baselaboratory', '/patient', '/region', '/analysis', '/baseanalysis', '/order', '/pattern', '/result', '/company', '/onlinestorage', '/globalstorage', '/plan', '/subscription'] as const
-  const proxy = {
-    ...Object.fromEntries(
-      proxyPaths.map(p => [p, { target: backendUrl, changeOrigin: true }]),
-    ),
-    '/api/nexus': {
-      target: 'https://nexus.5858.uz',
-      changeOrigin: true,
-      secure: true,
-      headers: {
-        origin: 'https://nexus.5858.uz',
-        referer: 'https://nexus.5858.uz/',
-      },
-    },
-  }
+  const proxyPaths = ['/user', '/role', '/laboratory', '/baselaboratory', '/patient', '/region', '/analysis', '/baseanalysis', '/order', '/pattern', '/result', '/company', '/onlinestorage', '/globalstorage', '/plan', '/subscription', '/gemini'] as const
+  const proxy = Object.fromEntries(
+    proxyPaths.map(p => [p, { target: backendUrl, changeOrigin: true }]),
+  )
 
   return {
     plugins: [

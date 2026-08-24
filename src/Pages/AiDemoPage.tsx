@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, NotebookPen, Plus, Send, Trash2, Sparkles } from "lucide-react";
+import { Bot, Loader2, NotebookPen, Plus, Send, Trash2 } from "lucide-react";
 import { sendAiMessage } from "@/api/aiChat";
 import { getStoredUser } from "@/api/session";
 import {
@@ -19,6 +19,34 @@ function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** ChatGPT uslubida chapdan o'ngga harfma-harf yozish. */
+async function typewriterReveal(
+  fullText: string,
+  onUpdate: (partial: string) => void,
+  signal?: { cancelled: boolean },
+): Promise<void> {
+  const chars = Array.from(fullText);
+  let shown = "";
+
+  for (let i = 0; i < chars.length; i++) {
+    if (signal?.cancelled) return;
+    shown += chars[i];
+    onUpdate(shown);
+
+    const ch = chars[i];
+    const next = chars[i + 1];
+    let delay = 18;
+    if (ch === "\n") delay = 80;
+    else if (/[.!?]/.test(ch) && (!next || /\s/.test(next))) delay = 120;
+    else if (/[,;:]/.test(ch)) delay = 45;
+    else if (ch === " ") delay = 12;
+
+    await new Promise<void>(resolve => {
+      window.setTimeout(resolve, delay);
+    });
+  }
+}
+
 export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
   const userId = getStoredUser()?.id ?? 0;
   const [messages, setMessages] = useState<AiChatMessage[]>(() =>
@@ -30,14 +58,18 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
   const [input, setInput] = useState("");
   const [noteDraft, setNoteDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [typingId, setTypingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const typeCancelRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   useEffect(() => {
     if (!userId) return;
+    // Typing jarayonida har harfda localStorage yozilmasin
+    if (typingId) return;
     saveAiChat(userId, messages);
-  }, [userId, messages]);
+  }, [userId, messages, typingId]);
 
   useEffect(() => {
     if (!userId) return;
@@ -46,7 +78,13 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending]);
+  }, [messages, sending, typingId]);
+
+  useEffect(() => {
+    return () => {
+      typeCancelRef.current.cancelled = true;
+    };
+  }, []);
 
   const handleSend = async () => {
     const prompt = input.trim();
@@ -66,17 +104,39 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
 
     try {
       const reply = await sendAiMessage(prompt);
+      const fullReply = reply || "Javob bo'sh qaytdi.";
+      const assistantId = newId();
       const assistantMsg: AiChatMessage = {
-        id: newId(),
+        id: assistantId,
         role: "assistant",
-        content: reply || "Javob bo'sh qaytdi.",
+        content: "",
         createdAt: Date.now(),
       };
+
       setMessages(prev => [...prev, assistantMsg]);
+      setSending(false);
+      setTypingId(assistantId);
+
+      typeCancelRef.current = { cancelled: false };
+      await typewriterReveal(
+        fullReply,
+        partial => {
+          setMessages(prev =>
+            prev.map(m => (m.id === assistantId ? { ...m, content: partial } : m)),
+          );
+        },
+        typeCancelRef.current,
+      );
+
+      setMessages(prev =>
+        prev.map(m => (m.id === assistantId ? { ...m, content: fullReply } : m)),
+      );
+      setTypingId(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Xatolik yuz berdi");
-    } finally {
       setSending(false);
+      setTypingId(null);
+    } finally {
       inputRef.current?.focus();
     }
   };
@@ -100,8 +160,11 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
   };
 
   const clearChat = () => {
+    typeCancelRef.current.cancelled = true;
     setMessages([]);
     setError(null);
+    setTypingId(null);
+    setSending(false);
   };
 
   const saveMessageAsNote = (content: string) => {
@@ -110,20 +173,10 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
     setNotes(prev => [text, ...prev]);
   };
 
+  const busy = sending || typingId != null;
+
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
-      {/* <div className="mb-4 shrink-0">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5" style={{ color: primaryColor }} />
-          <h2 className="text-lg font-bold tracking-tight text-foreground">
-            Sun&apos;iy intelekt (demo)
-          </h2>
-        </div>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Chat va eslatmalar · tarix brauzeringizda saqlanadi
-        </p>
-      </div> */}
-
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,2.9fr)_minmax(280px,1fr)]">
         {/* Chat */}
         <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
@@ -169,7 +222,14 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
                   }
                 >
                   {msg.content}
-                  {msg.role === "assistant" && (
+                  {msg.role === "assistant" && typingId === msg.id && (
+                    <span
+                      className="ml-0.5 inline-block h-[1em] w-[2px] translate-y-[2px] animate-pulse align-baseline"
+                      style={{ backgroundColor: primaryColor }}
+                      aria-hidden
+                    />
+                  )}
+                  {msg.role === "assistant" && typingId !== msg.id && msg.content && (
                     <button
                       type="button"
                       title="Eslatmaga qo'shish"
@@ -210,19 +270,19 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
                 onKeyDown={onKeyDown}
                 rows={2}
                 placeholder="Xabar yozing… (Enter — yuborish)"
-                disabled={sending}
+                disabled={busy}
                 className="ses-scrollbar min-h-[44px] max-h-32 flex-1 resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:ring-2 disabled:opacity-60"
                 style={{ ["--tw-ring-color" as string]: primaryColor }}
               />
               <button
                 type="button"
                 onClick={() => void handleSend()}
-                disabled={sending || !input.trim()}
+                disabled={busy || !input.trim()}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white transition-opacity disabled:opacity-40"
                 style={{ backgroundColor: primaryColor }}
                 aria-label="Yuborish"
               >
-                {sending ? (
+                {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4" />
