@@ -112,7 +112,7 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
-      <div className="mb-4 shrink-0">
+      {/* <div className="mb-4 shrink-0">
         <div className="flex items-center gap-2">
           <Sparkles className="h-5 w-5" style={{ color: primaryColor }} />
           <h2 className="text-lg font-bold tracking-tight text-foreground">
@@ -122,9 +122,9 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
         <p className="mt-0.5 text-sm text-muted-foreground">
           Chat va eslatmalar · tarix brauzeringizda saqlanadi
         </p>
-      </div>
+      </div> */}
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(280px,1fr)]">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,2.9fr)_minmax(280px,1fr)]">
         {/* Chat */}
         <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">

@@ -67,6 +67,7 @@ function escapeHtml(value: string): string {
 type ReceiptSlipData = {
   patientName: string;
   phone: string;
+  analysisId: number;
   analysisName: string;
   laboratoryName: string;
   priceLabel: string;
@@ -95,10 +96,11 @@ function receiptSlipHtml(slip: ReceiptSlipData): string {
           <span>${escapeHtml(slip.phone)}</span>
         </div>
       </div>
-      <div style="border-top:1px dashed #888;border-bottom:1px dashed #888;padding:12px 0">
+        <div style="border-top:1px dashed #888;border-bottom:1px dashed #888;padding:12px 0">
         <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px">
           <div>
             <div style="font-weight:600">${escapeHtml(slip.analysisName)}</div>
+            <div style="font-size:11px;color:#666;margin-top:2px">ID: ${slip.analysisId}</div>
             ${lab}
           </div>
           <div style="white-space:nowrap;font-weight:600">${escapeHtml(slip.priceLabel)}</div>
@@ -326,6 +328,7 @@ export function ReceiptModal({
       return {
         patientName: `${patient.last_name ?? ""} ${patient.first_name ?? ""}`.trim(),
         phone: patient.phone || "—",
+        analysisId: item.analysis_id,
         analysisName: item.analysis_name,
         laboratoryName: item.laboratory_name,
         priceLabel: formatPrice(item.price),
@@ -414,6 +417,9 @@ export function ReceiptModal({
                   <p className="mt-3 text-[12px] font-medium text-foreground text-center">
                     {activeLink.analysisName}
                   </p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground text-center">
+                    ID: {activeLink.analysisId}
+                  </p>
                   <p className="mt-1 text-[11px] text-muted-foreground text-center">
                     QR kodni skanerlab natija PDF ni oching
                   </p>
@@ -472,6 +478,7 @@ export function ReceiptModal({
                   <div className="min-w-0">
                     <p className="text-foreground font-medium truncate">{item.analysis_name}</p>
                     <p className="text-[10px] text-muted-foreground truncate">{item.laboratory_name}</p>
+                    <p className="text-[10px] text-muted-foreground">ID: {item.analysis_id}</p>
                   </div>
                   <span className="shrink-0 text-foreground">{formatPrice(item.price)}</span>
                 </div>

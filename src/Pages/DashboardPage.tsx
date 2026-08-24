@@ -5,6 +5,7 @@ import {
   Users, Archive, Plus, Download, RefreshCw, CheckCircle,
   ArrowUpRight, ArrowDownRight, Info, AlertCircle, Filter, Calendar,
   Wallet, ClipboardList, Banknote, Clock3, Loader2, ChevronDown,
+  CreditCard, Coins, MousePointerClick,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -119,6 +120,12 @@ const DATE_PRESETS = [
   },
 ] as const;
 
+const PAYMENT_METHODS = [
+  { id: "cash", label: "Naqd", method: "cash", icon: Coins, iconBg: "#ECFDF5", iconColor: "#059669" },
+  { id: "card", label: "Karta", method: "card", icon: CreditCard, iconBg: "#EFF6FF", iconColor: "#2563EB" },
+  { id: "click", label: "Pul o'tkazma", method: "click", icon: MousePointerClick, iconBg: "#FFF7ED", iconColor: "#EA580C" },
+] as const;
+
 const StatusBadge = ({ status }: { status: string }) => {
   const MAP: Record<string, string> = {
     Pending:   "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
@@ -140,9 +147,32 @@ type StatCardProps = {
   icon: React.ElementType; trend?: number;
   iconBg: string; iconColor: string; primaryColor: string;
   loading?: boolean;
+  compact?: boolean;
 };
 
-const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconColor, loading }: StatCardProps) => (
+const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconColor, loading, compact }: StatCardProps) => {
+  if (compact) {
+    return (
+      <div className="bg-card rounded-lg px-3.5 py-2.5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] flex items-center gap-3 min-h-[68px]">
+        <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0" style={{ background: iconBg }}>
+          <Icon className="w-4 h-4" style={{ color: iconColor }} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-semibold text-muted-foreground leading-none mb-1">{label}</div>
+          <div className="text-[18px] font-extrabold text-foreground leading-none tracking-tight truncate">
+            {loading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            ) : (
+              value
+            )}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1 truncate">{description}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
   <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] hover:shadow-[0_8px_24px_rgba(12,31,28,0.07)] hover:-translate-y-0.5 transition-all duration-200 group cursor-default">
     <div className="flex items-start justify-between mb-4">
       <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: iconBg }}>
@@ -168,7 +198,8 @@ const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconCo
     <div className="text-[13px] font-semibold text-foreground mb-0.5">{label}</div>
     <div className="text-[11px] text-muted-foreground">{description}</div>
   </div>
-);
+  );
+};
 
 export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const role = normalizeRoleName(getStoredUser()?.role?.name);
@@ -184,6 +215,11 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [labAll, setLabAll] = useState<OrderTotalAmountRange>(emptyRange);
   const [labPaid, setLabPaid] = useState<OrderTotalAmountRange>(emptyRange);
   const [labPending, setLabPending] = useState<OrderTotalAmountRange>(emptyRange);
+  const [paymentByMethod, setPaymentByMethod] = useState<Record<string, OrderTotalAmountRange>>({
+    cash: emptyRange(),
+    card: emptyRange(),
+    click: emptyRange(),
+  });
 
   const [labChartLoading, setLabChartLoading] = useState(true);
   const [labChartData, setLabChartData] = useState<LabChartRow[]>([]);
@@ -218,20 +254,30 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     void (async () => {
       setLabStatsLoading(true);
       try {
-        const [all, paid, pendingPay] = await Promise.all([
-          getOrderTotalAmountRange({ startDate, endDate }),
-          getOrderTotalAmountRange({ startDate, endDate, payment_status: "paid" }),
-          getOrderTotalAmountRange({ startDate, endDate, payment_status: "pending" }),
+        const baseParams = { startDate, endDate };
+        const [all, paid, pendingPay, cash, card, click] = await Promise.all([
+          getOrderTotalAmountRange(baseParams),
+          getOrderTotalAmountRange({ ...baseParams, payment_status: "paid" }),
+          getOrderTotalAmountRange({ ...baseParams, payment_status: "pending" }),
+          getOrderTotalAmountRange({ ...baseParams, payment_method: "cash" }),
+          getOrderTotalAmountRange({ ...baseParams, payment_method: "card" }),
+          getOrderTotalAmountRange({ ...baseParams, payment_method: "click" }),
         ]);
         if (cancelled) return;
         setLabAll(all);
         setLabPaid(paid);
         setLabPending(pendingPay);
+        setPaymentByMethod({ cash, card, click });
       } catch {
         if (cancelled) return;
         setLabAll(emptyRange());
         setLabPaid(emptyRange());
         setLabPending(emptyRange());
+        setPaymentByMethod({
+          cash: emptyRange(),
+          card: emptyRange(),
+          click: emptyRange(),
+        });
       } finally {
         if (!cancelled) setLabStatsLoading(false);
       }
@@ -357,6 +403,21 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     },
   ];
 
+  const paymentMethodStats = PAYMENT_METHODS.map(item => {
+    const stats = paymentByMethod[item.method];
+
+    return {
+      label: item.label,
+      value: formatSom(stats.totalFinalAmount),
+      description: `${stats.count.toLocaleString("uz-UZ")} ta buyurtma`,
+      icon: item.icon,
+      iconBg: item.iconBg,
+      iconColor: item.iconColor,
+      loading: labStatsLoading,
+      compact: true,
+    };
+  });
+
   const stats = isLabStatsRole ? labStats : defaultStats;
 
   const customTooltipStyle = {
@@ -430,6 +491,14 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
           <StatCard key={i} {...s} primaryColor={primaryColor} />
         ))}
       </div>
+
+      {isLabStatsRole && (
+        <div className="grid grid-cols-3 gap-3">
+          {paymentMethodStats.map((s, i) => (
+            <StatCard key={i} {...s} primaryColor={primaryColor} />
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
