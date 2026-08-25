@@ -1,6 +1,15 @@
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
-import { Bot, Loader2, NotebookPen, Plus, Send, Trash2 } from "lucide-react";
+import {
+  Bot,
+  Loader2,
+  NotebookPen,
+  Paperclip,
+  Plus,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
 import { sendAiMessage } from "@/api/aiChat";
 import { getStoredUser } from "@/api/session";
 import {
@@ -17,6 +26,12 @@ type AiDemoPageProps = {
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** ChatGPT uslubida chapdan o'ngga harfma-harf yozish. */
@@ -56,17 +71,18 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
     userId ? loadAiNotes(userId) : [],
   );
   const [input, setInput] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [typingId, setTypingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const typeCancelRef = useRef<{ cancelled: boolean }>({ cancelled: false });
 
   useEffect(() => {
     if (!userId) return;
-    // Typing jarayonida har harfda localStorage yozilmasin
     if (typingId) return;
     saveAiChat(userId, messages);
   }, [userId, messages, typingId]);
@@ -88,22 +104,32 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
 
   const handleSend = async () => {
     const prompt = input.trim();
-    if (!prompt || sending || !userId) return;
+    if ((!prompt && files.length === 0) || sending || !userId) return;
+
+    const attached = [...files];
+    const fileLabel =
+      attached.length > 0
+        ? `\n📎 ${attached.map(f => f.name).join(", ")}`
+        : "";
 
     const userMsg: AiChatMessage = {
       id: newId(),
       role: "user",
-      content: prompt,
+      content: (prompt || "Fayl yuborildi") + fileLabel,
       createdAt: Date.now(),
     };
 
     setMessages(prev => [...prev, userMsg]);
     setInput("");
+    setFiles([]);
     setError(null);
     setSending(true);
 
     try {
-      const reply = await sendAiMessage(prompt);
+      const reply = await sendAiMessage({
+        msg: prompt || "Fayl yuborildi",
+        files: attached,
+      });
       const fullReply = reply || "Javob bo'sh qaytdi.";
       const assistantId = newId();
       const assistantMsg: AiChatMessage = {
@@ -148,6 +174,17 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
     }
   };
 
+  const onFilesPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    if (picked.length === 0) return;
+    setFiles(prev => [...prev, ...picked]);
+    e.target.value = "";
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
   const addNote = () => {
     const text = noteDraft.trim();
     if (!text) return;
@@ -165,6 +202,7 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
     setError(null);
     setTypingId(null);
     setSending(false);
+    setFiles([]);
   };
 
   const saveMessageAsNote = (content: string) => {
@@ -174,6 +212,7 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
   };
 
   const busy = sending || typingId != null;
+  const canSend = !busy && (input.trim().length > 0 || files.length > 0);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 sm:p-6">
@@ -262,7 +301,50 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
           </div>
 
           <div className="border-t border-border p-3">
+            {files.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {files.map((file, index) => (
+                  <div
+                    key={`${file.name}-${file.size}-${index}`}
+                    className="flex max-w-full items-center gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-xs text-foreground"
+                  >
+                    <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 truncate font-medium">{file.name}</span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {formatFileSize(file.size)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(index)}
+                      disabled={busy}
+                      className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-40"
+                      aria-label="Faylni olib tashlash"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={onFilesPicked}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                aria-label="Fayl biriktirish"
+                title="Fayl biriktirish"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
               <textarea
                 ref={inputRef}
                 value={input}
@@ -277,7 +359,7 @@ export function AiDemoPage({ primaryColor }: AiDemoPageProps) {
               <button
                 type="button"
                 onClick={() => void handleSend()}
-                disabled={busy || !input.trim()}
+                disabled={!canSend}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white transition-opacity disabled:opacity-40"
                 style={{ backgroundColor: primaryColor }}
                 aria-label="Yuborish"

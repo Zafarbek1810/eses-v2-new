@@ -1,15 +1,11 @@
-const NEXUS_ORIGIN = "https://nexus.5858.uz";
-const NEXUS_API_PATH = "/api/nexus/privat/v1/secure_url";
+const AI_CHAT_URL = "https://mental.5858.uz/root/nexus_sendMsg_https";
 const AI_CHAT_TOKEN =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiZW1haWwiOiJhYmR1bGxhZXZkMzQ4QGdtYWlsLmNvbSIsImlhdCI6MTc4NzU1MTI1M30._Vjy1KAUE5AUJb4uGSr_EDxnrf9iEdFdOsVbJ_C08Q8";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiZW1haWwiOiJhYmR1bGxhZXZkYWRheG9uN0BnbWFpbC5jb20iLCJpYXQiOjE3ODc2Njc3Nzh9.HbhZ6furha9Gh7pW8ysEfsz7fgcRBqpY7c44Hiu-L4o";
 
-/** Dev: Vite proxy (same-origin). Prod: to'g'ridan-to'g'ri Nexus. */
-const nexusBase = import.meta.env.DEV ? NEXUS_API_PATH : `${NEXUS_ORIGIN}${NEXUS_API_PATH}`;
-
-const authHeaders = {
-  accept: "*/*",
-  authorization: `Bearer ${AI_CHAT_TOKEN}`,
-} as const;
+export type SendAiMessageOptions = {
+  msg: string;
+  files?: File[];
+};
 
 /** Strip trailing FINISHED marker from model reply. */
 export function cleanAiReply(raw: string): string {
@@ -35,39 +31,75 @@ async function readStreamText(res: Response): Promise<string> {
   return text.trim();
 }
 
-async function verifyAiToken(): Promise<void> {
-  const res = await fetch(`${nexusBase}/verifyToken`, {
-    method: "POST",
-    headers: {
-      ...authHeaders,
-      "content-type": "application/json",
-    },
-    body: "{}",
-  });
-
-  const payload = await res.json().catch(() => null) as { statusCode?: number } | null;
-  if (!res.ok || payload?.statusCode !== 200) {
-    throw new Error("Sun'iy intelekt tokeni tasdiqlanmadi");
+function parseJsonPayload(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
   }
 }
 
-export async function sendAiMessage(prompt: string): Promise<string> {
-  await verifyAiToken();
+function extractReply(raw: string): string {
+  const parsed = parseJsonPayload(raw);
+  if (!parsed) return raw;
 
-  const res = await fetch(`${nexusBase}/sendMsg`, {
-    method: "POST",
-    headers: {
-      ...authHeaders,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ msg: prompt }),
-  });
-
-  if (!res.ok) {
-    throw new Error("Sun'iy intelekt javob bermadi");
+  if (typeof parsed.statusCode === "number" && parsed.statusCode >= 400) {
+    const msg =
+      typeof parsed.message === "string"
+        ? parsed.message
+        : typeof parsed.error === "string"
+          ? parsed.error
+          : "Sun'iy intelekt javob bermadi";
+    throw new Error(msg);
   }
 
-  const reply = cleanAiReply(await readStreamText(res));
+  for (const key of ["answer_msg", "items", "message", "msg", "reply", "text", "data"]) {
+    const value = parsed[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+
+  return raw;
+}
+
+export async function sendAiMessage({
+  msg,
+  files = [],
+}: SendAiMessageOptions): Promise<string> {
+  const form = new FormData();
+  form.append("msg", msg);
+  for (const file of files) {
+    form.append("file", file);
+  }
+
+  const res = await fetch(AI_CHAT_URL, {
+    method: "POST",
+    headers: {
+      accept: "*/*",
+      authorization: `Bearer ${AI_CHAT_TOKEN}`,
+      // Content-Type qo'yilmaydi — brauzer multipart boundary ni o'zi qo'yadi
+    },
+    body: form,
+  });
+
+  const raw = await readStreamText(res);
+
+  if (!res.ok) {
+    const parsed = parseJsonPayload(raw);
+    const msg =
+      (parsed && typeof parsed.message === "string" && parsed.message) ||
+      (parsed && typeof parsed.error === "string" && parsed.error) ||
+      "Sun'iy intelekt javob bermadi";
+    throw new Error(msg);
+  }
+
+  if (!raw) {
+    throw new Error("Javob bo'sh qaytdi");
+  }
+
+  const reply = cleanAiReply(extractReply(raw));
   if (!reply) {
     throw new Error("Javob bo'sh qaytdi");
   }
