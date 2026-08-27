@@ -135,7 +135,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "subscriptions", label: "Obunalar", icon: WalletCards, section: "main" },
   { id: "patients", label: "Ro'yxatga olish", icon: UserPlus, section: "main" },
   { id: "kassa", label: "Kassa", icon: Wallet, section: "main" },
-  { id: "orders", label: "Laborant mudiri", icon: ClipboardList, section: "main" },
+  { id: "orders", label: "Laboratoriya mudiri", icon: ClipboardList, section: "main" },
   { id: "results", label: "Natijalar", icon: FileBarChart2, section: "main" },
   { id: "history", label: "Tarix", icon: History, section: "main" },
   {

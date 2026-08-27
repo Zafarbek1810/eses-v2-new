@@ -1,19 +1,21 @@
 import * as React from "react";
 import { CustomPdfTable } from "@/components/CustomPdfTable";
 import {
-  A4_PREVIEW_HEIGHT,
   A4_PREVIEW_SCALE,
-  A4_PREVIEW_WIDTH,
   PDF_CANVAS_FONT_CLASS,
   PDF_FONT_FAMILY,
+  PDF_PAGE_GAP_PREVIEW,
   formatDynamicDisplay,
-  getPdfPageCount,
+  getPagePreviewTop,
   getPdfPageMarginPreview,
   getPdfPreviewHeight,
-  getPdfUsablePreviewHeight,
+  getPdfPreviewWidth,
+  getTemplatePageLayouts,
   normalizeTableData,
+  previewYFromDocumentY,
   type PdfDynamicContext,
   type PdfElement,
+  type PdfPageLayout,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
 
@@ -33,61 +35,75 @@ export const ResultPdfCanvas = React.forwardRef<
   // Export / public view: each page has top+bottom margin so splits aren't flush to edges.
   // Edit mode: continuous canvas so inputs stay a single DOM tree.
   const withMargins = readOnly;
-  const pageCount = getPdfPageCount(template, withMargins);
+  const layouts = getTemplatePageLayouts(template, withMargins);
+  const width = getPdfPreviewWidth(template, withMargins);
   const height = getPdfPreviewHeight(template, withMargins);
   const marginPx = withMargins ? getPdfPageMarginPreview() : 0;
-  const usablePx = getPdfUsablePreviewHeight(withMargins);
 
-  const renderElements = (keyPrefix: string) =>
-    template.elements.map(el => (
-      <FillableElement
-        key={`${keyPrefix}-${el.id}`}
-        element={el}
-        fillValues={fillValues}
-        dynamicCtx={dynamicCtx}
-        onFillChange={onFillChange}
-        readOnly={readOnly}
-      />
-    ));
+  const renderElements = (keyPrefix: string, page?: PdfPageLayout) =>
+    template.elements.map(el => {
+      if (page) {
+        const elBottom = el.y + el.height;
+        const pageEnd = page.offsetY + page.height;
+        if (el.y >= pageEnd || elBottom <= page.offsetY) return null;
+      }
+      return (
+        <FillableElement
+          key={`${keyPrefix}-${el.id}`}
+          element={el}
+          fillValues={fillValues}
+          dynamicCtx={dynamicCtx}
+          onFillChange={onFillChange}
+          readOnly={readOnly}
+          yOffset={page ? page.offsetY : 0}
+          previewTop={
+            page
+              ? undefined
+              : previewYFromDocumentY(el.y, layouts, PDF_PAGE_GAP_PREVIEW)
+          }
+        />
+      );
+    });
 
   if (withMargins) {
     return (
       <div
         ref={ref}
-        className={`relative bg-white shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
-        style={{ width: A4_PREVIEW_WIDTH, height, fontFamily: PDF_FONT_FAMILY }}
+        className={`relative shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
+        style={{ width, height, fontFamily: PDF_FONT_FAMILY }}
       >
-        {Array.from({ length: pageCount }, (_, page) => (
-          <div
-            key={page}
-            className="absolute left-0 bg-white"
-            style={{
-              top: page * A4_PREVIEW_HEIGHT,
-              width: A4_PREVIEW_WIDTH,
-              height: A4_PREVIEW_HEIGHT,
-            }}
-          >
-            {/* Content window inset by top/bottom margins — edges stay blank */}
+        {layouts.map(page => {
+          const pageW = Math.round(page.width * A4_PREVIEW_SCALE);
+          const pageH = Math.round(page.height * A4_PREVIEW_SCALE);
+          const usableH = Math.max(40, pageH - 2 * marginPx);
+          const top = getPagePreviewTop(page, PDF_PAGE_GAP_PREVIEW);
+          return (
             <div
-              className="absolute left-0 overflow-hidden"
+              key={page.id}
+              data-pdf-page=""
+              data-orientation={page.orientation}
+              className="absolute left-0 bg-white shadow-md"
               style={{
-                top: marginPx,
-                width: A4_PREVIEW_WIDTH,
-                height: usablePx,
+                top,
+                width: pageW,
+                height: pageH,
               }}
             >
               <div
-                className="absolute left-0"
+                className="absolute left-0 overflow-hidden"
                 style={{
-                  top: -page * usablePx,
-                  width: A4_PREVIEW_WIDTH,
+                  top: marginPx,
+                  width: pageW,
+                  height: usableH,
                 }}
               >
-                {renderElements(`p${page}`)}
+                <div className="absolute left-0 top-0" style={{ width: pageW }}>
+                  {renderElements(`p${page.index}`, page)}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
@@ -95,23 +111,38 @@ export const ResultPdfCanvas = React.forwardRef<
   return (
     <div
       ref={ref}
-      className={`relative bg-white shrink-0 shadow-xl border border-slate-200 ${PDF_CANVAS_FONT_CLASS}`}
-      style={{ width: A4_PREVIEW_WIDTH, height, fontFamily: PDF_FONT_FAMILY }}
+      className={`relative bg-transparent shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
+      style={{ width, height, fontFamily: PDF_FONT_FAMILY }}
     >
-      {pageCount > 1 &&
-        Array.from({ length: pageCount - 1 }, (_, i) => (
-          <div
-            key={`break-${i}`}
-            data-pdf-page-break=""
-            className="absolute left-0 right-0 z-30 pointer-events-none border-t border-dashed border-teal-400/80"
-            style={{ top: (i + 1) * A4_PREVIEW_HEIGHT }}
-            aria-hidden
-          >
-            <span className="absolute right-1 -top-2.5 rounded bg-teal-100 px-1.5 py-0.5 text-[8px] font-semibold text-teal-700">
-              {i + 2}-sahifa
-            </span>
-          </div>
-        ))}
+      {layouts.map((page, i) => {
+        const pageW = Math.round(page.width * A4_PREVIEW_SCALE);
+        const pageH = Math.round(page.height * A4_PREVIEW_SCALE);
+        const top = getPagePreviewTop(page, PDF_PAGE_GAP_PREVIEW);
+        return (
+          <React.Fragment key={page.id}>
+            <div
+              data-pdf-page=""
+              data-orientation={page.orientation}
+              className="absolute left-0 bg-white shadow-xl border border-slate-200"
+              style={{ top, width: pageW, height: pageH }}
+              aria-hidden
+            />
+            {i > 0 && (
+              <div
+                data-pdf-page-break=""
+                className="absolute left-0 z-30 pointer-events-none border-t border-dashed border-teal-400/80"
+                style={{ top, width: pageW }}
+                aria-hidden
+              >
+                <span className="absolute right-1 -top-2.5 rounded bg-teal-100 px-1.5 py-0.5 text-[8px] font-semibold text-teal-700">
+                  {i + 1}-sahifa
+                  {page.orientation === "landscape" ? " · albom" : ""}
+                </span>
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
       {renderElements("edit")}
     </div>
   );
@@ -123,12 +154,17 @@ function FillableElement({
   dynamicCtx,
   onFillChange,
   readOnly = false,
+  yOffset = 0,
+  previewTop,
 }: {
   element: PdfElement;
   fillValues: Record<string, string>;
   dynamicCtx: PdfDynamicContext | null;
   onFillChange?: (key: string, value: string) => void;
   readOnly?: boolean;
+  yOffset?: number;
+  /** Absolute preview Y when rendering on continuous canvas with page gaps */
+  previewTop?: number;
 }) {
   const isTable = element.type === "table";
 
@@ -147,14 +183,18 @@ function FillableElement({
     userSelect: "none",
   };
 
+  const top =
+    previewTop != null
+      ? previewTop
+      : (element.y - yOffset) * A4_PREVIEW_SCALE;
+
   return (
     <div
       className="absolute"
       style={{
         left: element.x * A4_PREVIEW_SCALE,
-        top: element.y * A4_PREVIEW_SCALE,
+        top,
         width: element.width * A4_PREVIEW_SCALE,
-        // Images must keep the exact template box size (minHeight lets them grow).
         ...(element.type === "image"
           ? { height: element.height * A4_PREVIEW_SCALE, overflow: "hidden" }
           : { minHeight: element.height * A4_PREVIEW_SCALE }),

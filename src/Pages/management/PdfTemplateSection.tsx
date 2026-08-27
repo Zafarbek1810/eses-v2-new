@@ -5,7 +5,7 @@ import {
   Bold, Italic, Underline, Trash2, Save, Plus, RefreshCw, CheckCircle,
   AlertCircle, Loader2, FileText, MousePointer2, AlignLeft, AlignCenter,
   AlignRight, GripVertical, X, Upload, Database, Minus, Combine, Globe,
-  ArrowLeft,
+  ArrowLeft, FilePlus2, RectangleVertical, RectangleHorizontal,
 } from "lucide-react";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -15,35 +15,45 @@ import { ApiError } from "@/api/client";
 import { CustomPdfTable } from "@/components/CustomPdfTable";
 import {
   A4_HEIGHT,
-  A4_PREVIEW_HEIGHT,
   A4_PREVIEW_SCALE,
-  A4_PREVIEW_WIDTH,
   A4_WIDTH,
   DYNAMIC_FIELDS,
   PDF_CANVAS_FONT_CLASS,
   PDF_FONT_FAMILY,
   PDF_MAX_PAGES,
+  PDF_PAGE_GAP_PREVIEW,
+  addTemplatePage,
   createDynamicElement,
   createEmptyTableData,
   createPdfElement,
+  createPdfPage,
   createTemplateId,
   deletePdfTemplateRemote,
+  documentYFromPreviewY,
   fetchPdfTemplatesFromApi,
+  findPageLayoutAtY,
   formatDynamicDisplay,
+  getDocumentHeightFromLayouts,
   getDynamicFieldDef,
+  getPagePreviewTop,
   getPdfPageCount,
   getPdfPreviewHeight,
+  getPdfPreviewWidth,
+  getTemplatePageLayouts,
   loadPdfTemplates,
   mergeBodySelection,
   mergeHeaderSelection,
   normalizeSelection,
   normalizeTableData,
+  previewYFromDocumentY,
+  removeTemplatePage,
   resizeBodyRows,
   resizeHeaderRows,
   resizeTableCols,
   resolvePdfTemplateAnalysisId,
   setActiveTemplateId,
   setColWidthAt,
+  setTemplatePageOrientation,
   tableHeightForRows,
   unmergeBodySelection,
   unmergeHeaderSelection,
@@ -55,6 +65,7 @@ import {
   type PdfDynamicFieldKey,
   type PdfElement,
   type PdfElementType,
+  type PdfPageOrientation,
   type PdfTableData,
   type PdfTableSelection,
   type PdfTemplate,
@@ -119,6 +130,7 @@ export function emptyTemplate(
     id: createTemplateId(),
     name: analysis?.name ? `${analysis.name} shablon` : "Yangi PDF shablon",
     elements: [],
+    pages: [createPdfPage("portrait")],
     createdAt: now,
     updatedAt: now,
     analysisId: analysis?.id ?? null,
@@ -317,6 +329,7 @@ export function PdfTemplateSection({
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [dragTool, setDragTool] = useState<DragPayload | null>(null);
   const [tableSel, setTableSel] = useState<PdfTableSelection | null>(null);
+  const [selectedPageIndex, setSelectedPageIndex] = useState(0);
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const propsPanelRef = useRef<HTMLDivElement>(null);
@@ -534,13 +547,20 @@ export function PdfTemplateSection({
     }
     setSelectedId(id);
     setEditingId(null);
+    const el = template.elements.find(e => e.id === id);
+    if (el) {
+      const layouts = getTemplatePageLayouts(template);
+      setSelectedPageIndex(findPageLayoutAtY(layouts, el.y).index);
+    }
   };
 
   const dropToolOnCanvas = (payload: DragPayload, clientX: number, clientY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const layouts = getTemplatePageLayouts(template);
     const x = (clientX - rect.left) / A4_PREVIEW_SCALE;
-    const y = (clientY - rect.top) / A4_PREVIEW_SCALE;
+    const y = documentYFromPreviewY(clientY - rect.top, layouts, PDF_PAGE_GAP_PREVIEW);
+    const page = findPageLayoutAtY(layouts, y);
     const el =
       payload.kind === "dynamic"
         ? createDynamicElement(payload.key, x - 40, y - 10)
@@ -555,8 +575,12 @@ export function PdfTemplateSection({
                 }
               : undefined,
           );
+    // Clamp into the page under the drop point
+    el.x = Math.max(0, Math.min(el.x, page.width - el.width));
+    el.y = Math.max(0, Math.min(el.y, getDocumentHeightFromLayouts(layouts) - 20));
     setTemplate(t => ({ ...t, elements: [...t.elements, el] }));
     setSelectedId(el.id);
+    setSelectedPageIndex(page.index);
     setEditingId(null);
   };
 
@@ -575,18 +599,48 @@ export function PdfTemplateSection({
   };
 
   const handleElementDrag = (id: string, dx: number, dy: number) => {
-    const maxY = A4_HEIGHT * PDF_MAX_PAGES - 20;
-    setTemplate(t => ({
-      ...t,
-      elements: t.elements.map(el => {
-        if (el.id !== id) return el;
-        return {
-          ...el,
-          x: Math.max(0, Math.min(el.x + dx / A4_PREVIEW_SCALE, A4_WIDTH - el.width)),
-          y: Math.max(0, Math.min(el.y + dy / A4_PREVIEW_SCALE, maxY)),
-        };
-      }),
-    }));
+    setTemplate(t => {
+      const layouts = getTemplatePageLayouts(t);
+      const maxY = getDocumentHeightFromLayouts(layouts) - 20;
+      return {
+        ...t,
+        elements: t.elements.map(el => {
+          if (el.id !== id) return el;
+          const nextY = Math.max(0, Math.min(el.y + dy / A4_PREVIEW_SCALE, maxY));
+          const page = findPageLayoutAtY(layouts, nextY);
+          const nextX = Math.max(
+            0,
+            Math.min(el.x + dx / A4_PREVIEW_SCALE, page.width - el.width),
+          );
+          return { ...el, x: nextX, y: nextY };
+        }),
+      };
+    });
+  };
+
+  const handleAddPage = () => {
+    setTemplate(t => {
+      const next = addTemplatePage(t, "portrait");
+      const count = getPdfPageCount(next);
+      setSelectedPageIndex(count - 1);
+      return next;
+    });
+    setSelectedId(null);
+    pushToast("Yangi A4 varaq qo‘shildi");
+  };
+
+  const handlePageOrientation = (orientation: PdfPageOrientation) => {
+    setTemplate(t => setTemplatePageOrientation(t, selectedPageIndex, orientation));
+  };
+
+  const handleRemoveSelectedPage = () => {
+    setTemplate(t => {
+      const next = removeTemplatePage(t, selectedPageIndex);
+      const count = getPdfPageCount(next);
+      setSelectedPageIndex(i => Math.min(i, count - 1));
+      return next;
+    });
+    setSelectedId(null);
   };
 
   const handleElementResize = (
@@ -686,6 +740,7 @@ export function PdfTemplateSection({
     setSelectedId(null);
     setEditingId(null);
     setTableSel(null);
+    setSelectedPageIndex(0);
     setActiveTemplateId(null);
     setIsGlobalEditMode(false);
     setNewModalOpen(false);
@@ -704,6 +759,7 @@ export function PdfTemplateSection({
     setSelectedId(null);
     setEditingId(null);
     setTableSel(null);
+    setSelectedPageIndex(0);
     setActiveTemplateId(null);
     setEditorOpen(true);
     if (analysis.laboratory?.id) {
@@ -724,6 +780,7 @@ export function PdfTemplateSection({
     setSelectedId(null);
     setEditingId(null);
     setTableSel(null);
+    setSelectedPageIndex(0);
     setActiveTemplateId(id);
     setIsGlobalEditMode(false);
     setEditorOpen(true);
@@ -813,8 +870,13 @@ export function PdfTemplateSection({
 
   const isTextual = selected && ["heading1", "heading2", "heading3", "text"].includes(selected.type);
   const canStyleText = Boolean(isTextual || selected?.type === "dynamic");
-  const pageCount = getPdfPageCount(template);
+  const pageLayouts = getTemplatePageLayouts(template);
+  const pageCount = pageLayouts.length;
   const previewHeight = getPdfPreviewHeight(template);
+  const previewWidth = getPdfPreviewWidth(template);
+  const selectedPage = pageLayouts[Math.min(selectedPageIndex, pageCount - 1)] ?? pageLayouts[0];
+  const canAddPage = pageCount < PDF_MAX_PAGES;
+  const canRemovePage = pageCount > 1;
 
   return (
     <div className="space-y-4">
@@ -1159,10 +1221,11 @@ export function PdfTemplateSection({
                     <input
                       type="number"
                       min={40}
-                      max={A4_WIDTH}
+                      max={selectedPage?.width ?? A4_WIDTH}
                       value={Math.round(selected.width)}
                       onChange={e => {
-                        const width = Math.max(40, Math.min(A4_WIDTH - selected.x, Number(e.target.value) || 40));
+                        const maxW = (selectedPage?.width ?? A4_WIDTH) - selected.x;
+                        const width = Math.max(40, Math.min(maxW, Number(e.target.value) || 40));
                         updateElement(selected.id, { width });
                       }}
                       className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
@@ -1175,10 +1238,10 @@ export function PdfTemplateSection({
                     <input
                       type="number"
                       min={20}
-                      max={A4_HEIGHT * PDF_MAX_PAGES}
+                      max={getDocumentHeightFromLayouts(pageLayouts)}
                       value={Math.round(selected.height)}
                       onChange={e => {
-                        const maxH = A4_HEIGHT * PDF_MAX_PAGES - selected.y;
+                        const maxH = getDocumentHeightFromLayouts(pageLayouts) - selected.y;
                         const height = Math.max(20, Math.min(maxH, Number(e.target.value) || 20));
                         updateElement(selected.id, { height });
                       }}
@@ -1349,23 +1412,79 @@ export function PdfTemplateSection({
           </div>
         </div>
 
-        {/* A4 canvas (grows to 2–N pages when content overflows) */}
+        {/* A4 canvas (multi-page: add pages + per-page portrait/landscape) */}
         <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+          <div className="px-4 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-[13px] font-semibold text-foreground">A4 ko&apos;rinishi</h3>
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 Bosish — tahrirlash · burchak/tomon — o&apos;lcham · tortib ko&apos;chirish
                 {pageCount > 1 ? ` · ${pageCount} sahifa` : ""}
+                {selectedPage
+                  ? ` · tanlangan: ${selectedPage.index + 1} (${selectedPage.orientation === "landscape" ? "albom" : "kitob"})`
+                  : ""}
               </p>
             </div>
-            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <MousePointer2 className="w-3.5 h-3.5" />
-              {template.elements.length} element
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-xl border border-border bg-secondary/60 p-1">
+                <button
+                  type="button"
+                  disabled={!selectedPage}
+                  onClick={() => handlePageOrientation("portrait")}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                    selectedPage?.orientation === "portrait"
+                      ? "text-white"
+                      : "text-foreground hover:opacity-80"
+                  }`}
+                  style={
+                    selectedPage?.orientation === "portrait"
+                      ? { background: primaryColor }
+                      : undefined
+                  }
+                  title="Tanlangan varaq — kitob (книжная)"
+                >
+                  <RectangleVertical className="w-3.5 h-3.5" />
+                  Kitob
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedPage}
+                  onClick={() => handlePageOrientation("landscape")}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                    selectedPage?.orientation === "landscape"
+                      ? "text-white"
+                      : "text-foreground hover:opacity-80"
+                  }`}
+                  style={
+                    selectedPage?.orientation === "landscape"
+                      ? { background: primaryColor }
+                      : undefined
+                  }
+                  title="Tanlangan varaq — albom (альбомная)"
+                >
+                  <RectangleHorizontal className="w-3.5 h-3.5" />
+                  Albom
+                </button>
+              </div>
+              {canRemovePage && (
+                <button
+                  type="button"
+                  onClick={handleRemoveSelectedPage}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border border-border bg-secondary text-foreground hover:opacity-90"
+                  title="Tanlangan varaqni o‘chirish"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Varaqni o‘chirish
+                </button>
+              )}
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <MousePointer2 className="w-3.5 h-3.5" />
+                {template.elements.length} element
+              </div>
             </div>
           </div>
 
-          <div className="p-4 md:p-6 overflow-auto ses-scrollbar bg-secondary/40 flex justify-center max-h-[calc(100vh-220px)]">
+          <div className="p-4 md:p-6 overflow-auto ses-scrollbar bg-secondary/40 flex flex-col items-center gap-3 max-h-[calc(100vh-220px)]">
             <div
               ref={canvasRef}
               onDragOver={e => {
@@ -1379,30 +1498,67 @@ export function PdfTemplateSection({
                   setEditingId(null);
                 }
               }}
-              className={`relative bg-white shadow-xl border border-slate-200 shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
+              className={`relative shrink-0 ${PDF_CANVAS_FONT_CLASS}`}
               style={{
-                width: A4_PREVIEW_WIDTH,
+                width: previewWidth,
                 height: previewHeight,
                 fontFamily: PDF_FONT_FAMILY,
               }}
             >
-              {pageCount > 1 &&
-                Array.from({ length: pageCount - 1 }, (_, i) => (
-                  <div
-                    key={`page-break-${i}`}
-                    data-pdf-page-break=""
-                    className="absolute left-0 right-0 z-40 pointer-events-none border-t-2 border-dashed border-teal-400/80"
-                    style={{ top: (i + 1) * A4_PREVIEW_HEIGHT }}
-                    aria-hidden
-                  >
-                    <span className="absolute right-2 -top-2.5 rounded bg-teal-100 px-1.5 py-0.5 text-[9px] font-semibold text-teal-700">
-                      {i + 2}-sahifa
-                    </span>
-                  </div>
-                ))}
+              {pageLayouts.map((page, i) => {
+                const top = getPagePreviewTop(page, PDF_PAGE_GAP_PREVIEW);
+                const pageW = Math.round(page.width * A4_PREVIEW_SCALE);
+                const pageH = Math.round(page.height * A4_PREVIEW_SCALE);
+                const isSelected = selectedPage?.index === page.index;
+                return (
+                  <React.Fragment key={page.id}>
+                    <div
+                      data-pdf-page=""
+                      data-orientation={page.orientation}
+                      role="button"
+                      tabIndex={0}
+                      onMouseDown={e => {
+                        e.stopPropagation();
+                        setSelectedPageIndex(page.index);
+                        setSelectedId(null);
+                        setEditingId(null);
+                      }}
+                      className={`absolute left-0 bg-white shadow-xl border cursor-pointer ${
+                        isSelected ? "z-[1]" : "border-slate-200 z-0"
+                      }`}
+                      style={{
+                        top,
+                        width: pageW,
+                        height: pageH,
+                        outline: isSelected ? `2px solid ${primaryColor}` : undefined,
+                        outlineOffset: 2,
+                      }}
+                      aria-label={`${i + 1}-sahifa, ${page.orientation === "landscape" ? "albom" : "kitob"}`}
+                    >
+                      <span
+                        className="absolute left-2 top-2 z-20 rounded px-1.5 py-0.5 text-[9px] font-semibold pointer-events-none"
+                        style={{
+                          background: isSelected ? `${primaryColor}22` : "#f1f5f9",
+                          color: isSelected ? primaryColor : "#64748b",
+                        }}
+                      >
+                        {i + 1}-sahifa · {page.orientation === "landscape" ? "Albom" : "Kitob"}
+                      </span>
+                    </div>
+                    {i > 0 && (
+                      <div
+                        data-pdf-page-break=""
+                        className="absolute left-0 z-40 pointer-events-none border-t-2 border-dashed border-teal-400/80"
+                        style={{ top, width: pageW }}
+                        aria-hidden
+                      />
+                    )}
+                  </React.Fragment>
+                );
+              })}
 
               {template.elements.length === 0 && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
                   <div className="text-center px-6">
                     <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                     <p className="text-[13px] font-medium text-slate-400">
@@ -1420,6 +1576,9 @@ export function PdfTemplateSection({
                   editing={editingId === el.id}
                   primaryColor={primaryColor}
                   tableSel={selectedId === el.id ? tableSel : null}
+                  maxPageWidth={findPageLayoutAtY(pageLayouts, el.y).width}
+                  docHeight={getDocumentHeightFromLayouts(pageLayouts)}
+                  previewTop={previewYFromDocumentY(el.y, pageLayouts, PDF_PAGE_GAP_PREVIEW)}
                   onSelect={() => selectElement(el.id)}
                   onSelectHeaderCell={(row, col, shiftKey) => {
                     selectElement(el.id, { keepTableSel: true });
@@ -1452,6 +1611,17 @@ export function PdfTemplateSection({
                 />
               ))}
             </div>
+
+            <button
+              type="button"
+              disabled={!canAddPage}
+              onClick={handleAddPage}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-semibold border border-dashed border-border bg-card text-foreground hover:opacity-90 disabled:opacity-50 shadow-sm"
+              title={canAddPage ? "Pastdan yangi A4 varaq qo‘shish" : `Maksimum ${PDF_MAX_PAGES} sahifa`}
+            >
+              <FilePlus2 className="w-4 h-4" />
+              Bet qo‘shish
+            </button>
           </div>
         </div>
       </div>
@@ -1923,6 +2093,9 @@ function CanvasElement({
   editing,
   primaryColor,
   tableSel,
+  maxPageWidth = A4_WIDTH,
+  docHeight = A4_HEIGHT * PDF_MAX_PAGES,
+  previewTop,
   onSelect,
   onSelectHeaderCell,
   onSelectBodyCell,
@@ -1939,6 +2112,9 @@ function CanvasElement({
   editing: boolean;
   primaryColor: string;
   tableSel: PdfTableSelection | null;
+  maxPageWidth?: number;
+  docHeight?: number;
+  previewTop?: number;
   onSelect: () => void;
   onSelectHeaderCell: (row: number, col: number, shiftKey: boolean) => void;
   onSelectBodyCell: (row: number, col: number, shiftKey: boolean) => void;
@@ -1983,7 +2159,10 @@ function CanvasElement({
       const r = resizeRef.current;
       const dx = (e.clientX - r.startX) / A4_PREVIEW_SCALE;
       const dy = (e.clientY - r.startY) / A4_PREVIEW_SCALE;
-      onResize(element.id, applyResize(r.handle, r.origX, r.origY, r.origW, r.origH, dx, dy));
+      onResize(
+        element.id,
+        applyResize(r.handle, r.origX, r.origY, r.origW, r.origH, dx, dy, maxPageWidth, docHeight),
+      );
       return;
     }
     if (!dragRef.current || editing) return;
@@ -2072,7 +2251,7 @@ function CanvasElement({
       }`}
       style={{
         left: element.x * A4_PREVIEW_SCALE,
-        top: element.y * A4_PREVIEW_SCALE,
+        top: previewTop ?? element.y * A4_PREVIEW_SCALE,
         width: element.width * A4_PREVIEW_SCALE,
         height: element.height * A4_PREVIEW_SCALE,
         outline: selected ? `2px solid ${primaryColor}` : undefined,
@@ -2261,6 +2440,8 @@ function applyResize(
   origH: number,
   dx: number,
   dy: number,
+  maxPageWidth = A4_WIDTH,
+  docHeight = A4_HEIGHT * PDF_MAX_PAGES,
 ): { x: number; y: number; width: number; height: number } {
   let x = origX;
   let y = origY;
@@ -2291,8 +2472,7 @@ function applyResize(
     height = nextH;
   }
 
-  // Keep width inside A4; height may span multiple pages
-  const maxDocH = A4_HEIGHT * PDF_MAX_PAGES;
+  // Keep width inside current page; height may span multiple pages
   if (x < 0) {
     width += x;
     x = 0;
@@ -2301,8 +2481,8 @@ function applyResize(
     height += y;
     y = 0;
   }
-  if (x + width > A4_WIDTH) width = A4_WIDTH - x;
-  if (y + height > maxDocH) height = maxDocH - y;
+  if (x + width > maxPageWidth) width = maxPageWidth - x;
+  if (y + height > docHeight) height = docHeight - y;
 
   width = Math.max(MIN_W, width);
   height = Math.max(MIN_H, height);

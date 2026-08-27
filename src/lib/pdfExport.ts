@@ -8,17 +8,39 @@ type CaptureResult = {
   pageCount: number;
 };
 
-/**
- * Capture a rendered PDF preview element as canvas + multi-page A4 jsPDF.
- * Tall content continues onto page 2, 3, … instead of being squashed onto one page.
- */
-async function captureElement(el: HTMLElement): Promise<CaptureResult> {
-  // Ensure the node is laid out / painted before snapshot (helps scroll parents).
+type PageCapture = {
+  canvas: HTMLCanvasElement;
+  orientation: "portrait" | "landscape";
+  widthPt: number;
+  heightPt: number;
+};
+
+function applyCloneStyles(cloned: HTMLElement, captureScale: number) {
+  const border = `${1 / captureScale}px solid #000`;
+  cloned.style.fontFamily = PDF_FONT_FAMILY;
+  cloned.querySelectorAll("*").forEach(n => {
+    (n as HTMLElement).style.fontFamily = PDF_FONT_FAMILY;
+  });
+  cloned.querySelectorAll("[data-pdf-page-break]").forEach(n => n.remove());
+  cloned.querySelectorAll("table").forEach(t => {
+    const table = t as HTMLElement;
+    table.style.border = "none";
+    table.style.borderCollapse = "collapse";
+    table.style.borderSpacing = "0";
+  });
+  cloned.querySelectorAll("th, td").forEach(cell => {
+    const node = cell as HTMLElement;
+    node.style.border = border;
+    node.style.outline = "none";
+    node.style.boxShadow = "none";
+  });
+}
+
+async function captureNode(el: HTMLElement, captureScale = 2): Promise<HTMLCanvasElement> {
   el.scrollIntoView({ block: "nearest", inline: "nearest" });
   await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
-  const captureScale = 2;
-  const canvas = await html2canvas(el, {
+  return html2canvas(el, {
     scale: captureScale,
     useCORS: true,
     allowTaint: true,
@@ -28,65 +50,41 @@ async function captureElement(el: HTMLElement): Promise<CaptureResult> {
     scrollY: 0,
     windowWidth: el.scrollWidth,
     windowHeight: el.scrollHeight,
-    onclone: (_doc, cloned) => {
-      // scale:2 → 0.5px CSS = 1px in the final bitmap/PDF
-      const border = `${1 / captureScale}px solid #000`;
-      cloned.style.fontFamily = PDF_FONT_FAMILY;
-      cloned.querySelectorAll("*").forEach(n => {
-        (n as HTMLElement).style.fontFamily = PDF_FONT_FAMILY;
-      });
-      cloned.querySelectorAll("[data-pdf-page-break]").forEach(n => n.remove());
-      cloned.querySelectorAll("table").forEach(t => {
-        const table = t as HTMLElement;
-        table.style.border = "none";
-        table.style.borderCollapse = "collapse";
-        table.style.borderSpacing = "0";
-      });
-      cloned.querySelectorAll("th, td").forEach(cell => {
-        const node = cell as HTMLElement;
-        node.style.border = border;
-        node.style.outline = "none";
-        node.style.boxShadow = "none";
-      });
-    },
+    onclone: (_doc, cloned) => applyCloneStyles(cloned, captureScale),
   });
+}
 
-  const pdf = new jsPDF({
-    orientation: "portrait",
-    unit: "pt",
-    format: [A4_WIDTH, A4_HEIGHT],
-  });
-  const pageW = pdf.internal.pageSize.getWidth();
-  const pageH = pdf.internal.pageSize.getHeight();
-  const imgData = canvas.toDataURL("image/png");
+function pageSizeForOrientation(orientation: "portrait" | "landscape") {
+  return orientation === "landscape"
+    ? { widthPt: A4_HEIGHT, heightPt: A4_WIDTH }
+    : { widthPt: A4_WIDTH, heightPt: A4_HEIGHT };
+}
 
-  const imgW = pageW;
-  const imgH = (canvas.height * imgW) / canvas.width;
+async function capturePages(el: HTMLElement): Promise<PageCapture[]> {
+  const pageNodes = Array.from(
+    el.querySelectorAll<HTMLElement>("[data-pdf-page]"),
+  );
 
-  // ceil with tiny epsilon avoids a blank extra page from float rounding
-  // (preview px → A4 pt), while real overflow still adds pages.
-  const pageCount = Math.max(1, Math.ceil(imgH / pageH - 0.01));
-
-  for (let i = 0; i < pageCount; i++) {
-    if (i > 0) pdf.addPage();
-    pdf.addImage(imgData, "PNG", 0, -i * pageH, imgW, imgH);
+  if (pageNodes.length > 0) {
+    const pages: PageCapture[] = [];
+    for (const node of pageNodes) {
+      const orientation =
+        node.dataset.orientation === "landscape" ? "landscape" : "portrait";
+      const { widthPt, heightPt } = pageSizeForOrientation(orientation);
+      const canvas = await captureNode(node);
+      pages.push({ canvas, orientation, widthPt, heightPt });
+    }
+    return pages;
   }
 
-  return { canvas, pdf, pageCount };
-}
-
-/** Capture a rendered PDF preview element and save as a multi-page A4 PDF. */
-export async function downloadElementAsPdf(
-  el: HTMLElement,
-  filename: string,
-): Promise<void> {
-  const { pdf } = await captureElement(el);
-  pdf.save(filename);
-}
-
-function sliceCanvasPages(canvas: HTMLCanvasElement, pageCount: number): string[] {
+  // Legacy fallback: single continuous portrait sheet sliced by A4 height
+  const canvas = await captureNode(el);
+  const { widthPt, heightPt } = pageSizeForOrientation("portrait");
+  const imgW = widthPt;
+  const imgH = (canvas.height * imgW) / canvas.width;
+  const pageCount = Math.max(1, Math.ceil(imgH / heightPt - 0.01));
   const slicePx = canvas.height / pageCount;
-  const pages: string[] = [];
+  const pages: PageCapture[] = [];
 
   for (let i = 0; i < pageCount; i++) {
     const sy = Math.floor(i * slicePx);
@@ -99,10 +97,65 @@ function sliceCanvasPages(canvas: HTMLCanvasElement, pageCount: number): string[
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
     ctx.drawImage(canvas, 0, sy, canvas.width, sh, 0, 0, canvas.width, sh);
-    pages.push(pageCanvas.toDataURL("image/png"));
+    pages.push({
+      canvas: pageCanvas,
+      orientation: "portrait",
+      widthPt,
+      heightPt,
+    });
+  }
+  return pages;
+}
+
+function buildPdfFromPages(pages: PageCapture[]): { pdf: jsPDF; pageCount: number } {
+  if (pages.length === 0) {
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "pt",
+      format: [A4_WIDTH, A4_HEIGHT],
+    });
+    return { pdf, pageCount: 0 };
   }
 
-  return pages;
+  const first = pages[0];
+  const pdf = new jsPDF({
+    orientation: first.orientation,
+    unit: "pt",
+    format: [first.widthPt, first.heightPt],
+  });
+
+  pages.forEach((page, i) => {
+    if (i > 0) {
+      pdf.addPage([page.widthPt, page.heightPt], page.orientation);
+    }
+    const imgData = page.canvas.toDataURL("image/png");
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    // Fit image into page (covers full page; capture already matches aspect).
+    pdf.addImage(imgData, "PNG", 0, 0, pageW, pageH);
+  });
+
+  return { pdf, pageCount: pages.length };
+}
+
+/**
+ * Capture a rendered PDF preview element as canvas + multi-page A4 jsPDF.
+ * Each `[data-pdf-page]` keeps its own portrait/landscape size.
+ */
+async function captureElement(el: HTMLElement): Promise<CaptureResult> {
+  const pages = await capturePages(el);
+  const { pdf, pageCount } = buildPdfFromPages(pages);
+  const canvas = pages[0]?.canvas ?? document.createElement("canvas");
+  return { canvas, pdf, pageCount };
+}
+
+/** Capture a rendered PDF preview element and save as a multi-page A4 PDF. */
+export async function downloadElementAsPdf(
+  el: HTMLElement,
+  filename: string,
+): Promise<void> {
+  const { pdf } = await captureElement(el);
+  pdf.save(filename);
 }
 
 function waitForImages(doc: Document): Promise<void> {
@@ -122,7 +175,6 @@ function waitForImages(doc: Document): Promise<void> {
         }),
     ),
   ).then(async () => {
-    // Decode so print preview isn't blank on first paint.
     await Promise.all(
       images.map(img => (img.decode ? img.decode().catch(() => undefined) : Promise.resolve())),
     );
@@ -135,22 +187,20 @@ function waitForImages(doc: Document): Promise<void> {
  * print preview shows the PDF instead of a blank page from an off-screen iframe.
  */
 export async function printElementAsPdf(el: HTMLElement): Promise<void> {
-  const { canvas, pageCount } = await captureElement(el);
-  if (canvas.width < 2 || canvas.height < 2) {
+  const pages = await capturePages(el);
+  if (pages.length === 0 || pages.some(p => p.canvas.width < 2 || p.canvas.height < 2)) {
     throw new Error("PDF kontenti olinmadi");
   }
 
-  const pageImages = sliceCanvasPages(canvas, pageCount);
-  if (pageImages.length === 0) {
-    throw new Error("PDF sahifalari yaratilmadi");
-  }
-
-  const pagesHtml = pageImages
-    .map(
-      (src, i) =>
-        `<div class="page"><img src="${src}" alt="Sahifa ${i + 1}" /></div>`,
-    )
+  const pagesHtml = pages
+    .map((page, i) => {
+      const src = page.canvas.toDataURL("image/png");
+      return `<div class="page page-${page.orientation}"><img src="${src}" alt="Sahifa ${i + 1}" /></div>`;
+    })
     .join("");
+
+  const hasLandscape = pages.some(p => p.orientation === "landscape");
+  const hasPortrait = pages.some(p => p.orientation === "portrait");
 
   const html = `<!DOCTYPE html>
 <html>
@@ -158,11 +208,10 @@ export async function printElementAsPdf(el: HTMLElement): Promise<void> {
   <meta charset="utf-8" />
   <title>Chop etish</title>
   <style>
-    @page { size: A4 portrait; margin: 0; }
+    @page portrait-page { size: A4 portrait; margin: 0; }
+    @page landscape-page { size: A4 landscape; margin: 0; }
     html, body { margin: 0; padding: 0; background: #fff; }
     .page {
-      width: ${A4_WIDTH}pt;
-      height: ${A4_HEIGHT}pt;
       margin: 0 auto;
       overflow: hidden;
       page-break-after: always;
@@ -173,10 +222,21 @@ export async function printElementAsPdf(el: HTMLElement): Promise<void> {
       page-break-after: auto;
       break-after: auto;
     }
+    .page-portrait {
+      width: ${A4_WIDTH}pt;
+      height: ${A4_HEIGHT}pt;
+      ${hasPortrait ? "page: portrait-page;" : ""}
+    }
+    .page-landscape {
+      width: ${A4_HEIGHT}pt;
+      height: ${A4_WIDTH}pt;
+      ${hasLandscape ? "page: landscape-page;" : ""}
+    }
     img {
       display: block;
       width: 100%;
-      height: auto;
+      height: 100%;
+      object-fit: fill;
     }
   </style>
 </head>
@@ -185,7 +245,6 @@ export async function printElementAsPdf(el: HTMLElement): Promise<void> {
 </body>
 </html>`;
 
-  // Do not use noopener — we must write HTML and call print() on this window.
   const win = window.open("", "_blank", "width=900,height=1200");
   if (!win) {
     throw new Error(
@@ -198,7 +257,6 @@ export async function printElementAsPdf(el: HTMLElement): Promise<void> {
   win.document.close();
 
   await waitForImages(win.document);
-  // One more frame so layout settles before the dialog snapshots.
   await new Promise<void>(r => window.setTimeout(() => r(), 100));
 
   try {
@@ -220,5 +278,4 @@ export async function printElementAsPdf(el: HTMLElement): Promise<void> {
   win.addEventListener("afterprint", () => {
     window.setTimeout(closeWin, 200);
   });
-  // If user cancels / afterprint missing, leave tab open so they can retry Ctrl+P.
 }

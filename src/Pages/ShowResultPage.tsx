@@ -25,6 +25,7 @@ import {
   A4_PREVIEW_WIDTH,
   bodyCellKey,
   getPdfPreviewHeight,
+  getPdfPreviewWidth,
   headerCellKey,
   isDynamicCell,
   normalizeTableData,
@@ -316,6 +317,10 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
     state.status === "ready"
       ? getPdfPreviewHeight(state.template, true)
       : A4_PREVIEW_HEIGHT;
+  const previewPageWidth =
+    state.status === "ready"
+      ? getPdfPreviewWidth(state.template, true)
+      : A4_PREVIEW_WIDTH;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
@@ -446,7 +451,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
             <div className="overflow-auto">
               <div
                 className="shadow-lg ring-1 ring-slate-200"
-                style={{ width: A4_PREVIEW_WIDTH, minHeight: previewPageHeight }}
+                style={{ width: previewPageWidth, minHeight: previewPageHeight }}
               >
                 <ResultPdfCanvas
                   ref={pdfRef}

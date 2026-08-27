@@ -477,10 +477,31 @@ export type PdfElement = {
   style: PdfTextStyle;
 };
 
+export type PdfPageOrientation = "portrait" | "landscape";
+
+export type PdfPage = {
+  id: string;
+  orientation: PdfPageOrientation;
+};
+
+export type PdfPageLayout = {
+  index: number;
+  id: string;
+  orientation: PdfPageOrientation;
+  /** Page width in A4 points */
+  width: number;
+  /** Page height in A4 points */
+  height: number;
+  /** Y offset of this page in the continuous document (A4 points) */
+  offsetY: number;
+};
+
 export type PdfTemplate = {
   id: string;
   name: string;
   elements: PdfElement[];
+  /** Explicit A4 pages (portrait/landscape). Missing → derived from content. */
+  pages?: PdfPage[];
   updatedAt: string;
   createdAt: string;
   /** Backend `/onlinestorage` record id when persisted remotely */
@@ -509,10 +530,271 @@ export const PDF_FONT_FAMILY = '"Times New Roman", Times, serif';
 export const PDF_CANVAS_FONT_CLASS = "pdf-times";
 export const A4_PREVIEW_WIDTH = Math.round(A4_WIDTH * A4_PREVIEW_SCALE);
 export const A4_PREVIEW_HEIGHT = Math.round(A4_HEIGHT * A4_PREVIEW_SCALE);
+/** Landscape A4 preview size (297×210 mm) */
+export const A4_LANDSCAPE_PREVIEW_WIDTH = Math.round(A4_HEIGHT * A4_PREVIEW_SCALE);
+export const A4_LANDSCAPE_PREVIEW_HEIGHT = Math.round(A4_WIDTH * A4_PREVIEW_SCALE);
 /** Soft cap for very long templates (keeps editor usable) */
 export const PDF_MAX_PAGES = 10;
 /** Top/bottom margin on each printed page (pt) so table splits aren't flush to edges */
 export const PDF_PAGE_MARGIN = 44;
+/** Visual gap between stacked A4 sheets in on-screen preview only (not printed). */
+export const PDF_PAGE_GAP_PREVIEW = 18;
+
+export function createPdfPageId() {
+  return `pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createPdfPage(orientation: PdfPageOrientation = "portrait"): PdfPage {
+  return { id: createPdfPageId(), orientation };
+}
+
+export function normalizePdfPageOrientation(raw: unknown): PdfPageOrientation {
+  return raw === "landscape" ? "landscape" : "portrait";
+}
+
+export function normalizePdfPages(raw: unknown): PdfPage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PdfPage[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    out.push({
+      id: typeof obj.id === "string" && obj.id ? obj.id : createPdfPageId(),
+      orientation: normalizePdfPageOrientation(obj.orientation),
+    });
+    if (out.length >= PDF_MAX_PAGES) break;
+  }
+  return out;
+}
+
+/** Physical page size in A4 points. */
+export function getPageDimensions(orientation: PdfPageOrientation): {
+  width: number;
+  height: number;
+} {
+  return orientation === "landscape"
+    ? { width: A4_HEIGHT, height: A4_WIDTH }
+    : { width: A4_WIDTH, height: A4_HEIGHT };
+}
+
+export function getPageLayoutsFromPages(pages: PdfPage[]): PdfPageLayout[] {
+  let offsetY = 0;
+  return pages.map((page, index) => {
+    const { width, height } = getPageDimensions(page.orientation);
+    const layout: PdfPageLayout = {
+      index,
+      id: page.id,
+      orientation: page.orientation,
+      width,
+      height,
+      offsetY,
+    };
+    offsetY += height;
+    return layout;
+  });
+}
+
+/**
+ * Resolve explicit pages, or synthesize portrait pages from content height.
+ * Always returns at least one page (capped at PDF_MAX_PAGES).
+ */
+export function ensureTemplatePages(
+  template: PdfTemplate,
+  withMargins = false,
+): PdfPage[] {
+  const explicit = normalizePdfPages(template.pages);
+  let pages =
+    explicit.length > 0 ? [...explicit] : [createPdfPage("portrait")];
+
+  const bottom = getPdfContentBottom(template);
+  if (bottom <= 0) return pages.slice(0, PDF_MAX_PAGES);
+
+  // Grow stack until content fits (or max pages).
+  let layouts = getPageLayoutsFromPages(pages);
+  let docH = layouts.length
+    ? layouts[layouts.length - 1].offsetY + layouts[layouts.length - 1].height
+    : 0;
+
+  // Legacy equal-page estimate when no explicit pages were saved —
+  // withMargins uses slightly shorter usable height (export/print).
+  if (explicit.length === 0) {
+    const usable = getPdfUsablePageHeight(withMargins);
+    const needed = Math.max(1, Math.ceil(bottom / usable - 0.001));
+    while (pages.length < needed && pages.length < PDF_MAX_PAGES) {
+      pages.push(createPdfPage("portrait"));
+    }
+    return pages.slice(0, PDF_MAX_PAGES);
+  }
+
+  while (bottom > docH && pages.length < PDF_MAX_PAGES) {
+    pages.push(createPdfPage("portrait"));
+    layouts = getPageLayoutsFromPages(pages);
+    docH = layouts[layouts.length - 1].offsetY + layouts[layouts.length - 1].height;
+  }
+  return pages.slice(0, PDF_MAX_PAGES);
+}
+
+export function getTemplatePageLayouts(
+  template: PdfTemplate,
+  withMargins = false,
+): PdfPageLayout[] {
+  return getPageLayoutsFromPages(ensureTemplatePages(template, withMargins));
+}
+
+export function findPageLayoutAtY(
+  layouts: PdfPageLayout[],
+  y: number,
+): PdfPageLayout {
+  if (layouts.length === 0) {
+    const { width, height } = getPageDimensions("portrait");
+    return { index: 0, id: "pg-0", orientation: "portrait", width, height, offsetY: 0 };
+  }
+  for (let i = 0; i < layouts.length; i++) {
+    const layout = layouts[i];
+    const end = layout.offsetY + layout.height;
+    if (y < end || i === layouts.length - 1) return layout;
+  }
+  return layouts[layouts.length - 1];
+}
+
+export function getDocumentHeightFromLayouts(layouts: PdfPageLayout[]): number {
+  if (layouts.length === 0) return A4_HEIGHT;
+  const last = layouts[layouts.length - 1];
+  return last.offsetY + last.height;
+}
+
+export function getDocumentWidthFromLayouts(layouts: PdfPageLayout[]): number {
+  if (layouts.length === 0) return A4_WIDTH;
+  return Math.max(...layouts.map(l => l.width));
+}
+
+/** Preview Y (px) of a page sheet top, including visual gaps between pages. */
+export function getPagePreviewTop(
+  layout: PdfPageLayout,
+  gapPx: number = PDF_PAGE_GAP_PREVIEW,
+): number {
+  return Math.round(layout.offsetY * A4_PREVIEW_SCALE + layout.index * gapPx);
+}
+
+/** Map document Y (A4 pt) → preview Y (px), inserting page gaps. */
+export function previewYFromDocumentY(
+  docY: number,
+  layouts: PdfPageLayout[],
+  gapPx: number = PDF_PAGE_GAP_PREVIEW,
+): number {
+  const page = findPageLayoutAtY(layouts, docY);
+  return docY * A4_PREVIEW_SCALE + page.index * gapPx;
+}
+
+/** Map preview Y (px) → document Y (A4 pt), skipping visual gaps. */
+export function documentYFromPreviewY(
+  previewY: number,
+  layouts: PdfPageLayout[],
+  gapPx: number = PDF_PAGE_GAP_PREVIEW,
+): number {
+  if (layouts.length === 0) return Math.max(0, previewY / A4_PREVIEW_SCALE);
+  for (let i = 0; i < layouts.length; i++) {
+    const layout = layouts[i];
+    const top = getPagePreviewTop(layout, gapPx);
+    const pageH = layout.height * A4_PREVIEW_SCALE;
+    const bottom = top + pageH;
+    const nextTop =
+      i + 1 < layouts.length ? getPagePreviewTop(layouts[i + 1], gapPx) : bottom + gapPx;
+    if (previewY < nextTop || i === layouts.length - 1) {
+      const localPx = Math.max(0, Math.min(pageH, previewY - top));
+      return layout.offsetY + localPx / A4_PREVIEW_SCALE;
+    }
+  }
+  const last = layouts[layouts.length - 1];
+  return last.offsetY + last.height;
+}
+
+/** Append a new A4 page at the bottom of the template. */
+export function addTemplatePage(
+  template: PdfTemplate,
+  orientation: PdfPageOrientation = "portrait",
+): PdfTemplate {
+  const pages = ensureTemplatePages(template);
+  if (pages.length >= PDF_MAX_PAGES) return { ...template, pages };
+  return {
+    ...template,
+    pages: [...pages, createPdfPage(orientation)],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Change one page's orientation (книжная / альбомная).
+ * Shifts elements below that page when height changes.
+ */
+export function setTemplatePageOrientation(
+  template: PdfTemplate,
+  pageIndex: number,
+  orientation: PdfPageOrientation,
+): PdfTemplate {
+  const pages = ensureTemplatePages(template);
+  if (pageIndex < 0 || pageIndex >= pages.length) return template;
+  if (pages[pageIndex].orientation === orientation) {
+    return { ...template, pages };
+  }
+
+  const oldLayouts = getPageLayoutsFromPages(pages);
+  const oldH = oldLayouts[pageIndex].height;
+  const nextPages = pages.map((p, i) =>
+    i === pageIndex ? { ...p, orientation } : p,
+  );
+  const newLayouts = getPageLayoutsFromPages(nextPages);
+  const newH = newLayouts[pageIndex].height;
+  const delta = newH - oldH;
+  const threshold = oldLayouts[pageIndex].offsetY + oldH;
+
+  const elements =
+    delta === 0
+      ? template.elements
+      : template.elements.map(el => {
+          if (el.y < threshold - 0.5) return el;
+          return { ...el, y: Math.max(0, el.y + delta) };
+        });
+
+  return {
+    ...template,
+    pages: nextPages,
+    elements,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Remove a page (keeps at least one). Shifts elements below upward. */
+export function removeTemplatePage(
+  template: PdfTemplate,
+  pageIndex: number,
+): PdfTemplate {
+  const pages = ensureTemplatePages(template);
+  if (pages.length <= 1 || pageIndex < 0 || pageIndex >= pages.length) {
+    return { ...template, pages };
+  }
+  const layouts = getPageLayoutsFromPages(pages);
+  const removed = layouts[pageIndex];
+  const nextPages = pages.filter((_, i) => i !== pageIndex);
+  const elements = template.elements
+    .filter(el => {
+      const end = el.y + getElementRenderHeight(el);
+      // Drop elements that lived entirely on the removed page
+      return !(el.y >= removed.offsetY && end <= removed.offsetY + removed.height);
+    })
+    .map(el => {
+      if (el.y >= removed.offsetY + removed.height - 0.5) {
+        return { ...el, y: Math.max(0, el.y - removed.height) };
+      }
+      return el;
+    });
+  return {
+    ...template,
+    pages: nextPages,
+    elements,
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 const MIN_TABLE_COLS = 1;
 const MAX_TABLE_COLS = 12;
@@ -1118,20 +1400,30 @@ export function getPdfUsablePreviewHeight(withMargins = false): number {
  * withMargins=true — used for result preview/export so content doesn't touch page edges.
  */
 export function getPdfPageCount(template: PdfTemplate, withMargins = false): number {
-  const bottom = getPdfContentBottom(template);
-  if (bottom <= 0) return 1;
-  const usable = getPdfUsablePageHeight(withMargins);
-  return Math.max(1, Math.min(PDF_MAX_PAGES, Math.ceil(bottom / usable - 0.001)));
+  return ensureTemplatePages(template, withMargins).length;
 }
 
-/** Full document height in A4 points (N × A4). */
+/** Full document height in A4 points (sum of page heights). */
 export function getPdfDocumentHeight(template: PdfTemplate, withMargins = false): number {
-  return getPdfPageCount(template, withMargins) * A4_HEIGHT;
+  return getDocumentHeightFromLayouts(getTemplatePageLayouts(template, withMargins));
 }
 
-/** Full document height in preview pixels (exact N × A4 preview). */
+/** Full document width in A4 points (max page width — landscape may be wider). */
+export function getPdfDocumentWidth(template: PdfTemplate, withMargins = false): number {
+  return getDocumentWidthFromLayouts(getTemplatePageLayouts(template, withMargins));
+}
+
+/** Full document height in preview pixels (includes visual gaps between sheets). */
 export function getPdfPreviewHeight(template: PdfTemplate, withMargins = false): number {
-  return getPdfPageCount(template, withMargins) * A4_PREVIEW_HEIGHT;
+  const layouts = getTemplatePageLayouts(template, withMargins);
+  const contentPx = getPdfDocumentHeight(template, withMargins) * A4_PREVIEW_SCALE;
+  const gaps = Math.max(0, layouts.length - 1) * PDF_PAGE_GAP_PREVIEW;
+  return Math.round(contentPx + gaps);
+}
+
+/** Full document width in preview pixels. */
+export function getPdfPreviewWidth(template: PdfTemplate, withMargins = false): number {
+  return Math.round(getPdfDocumentWidth(template, withMargins) * A4_PREVIEW_SCALE);
 }
 
 function clampInt(n: number, min: number, max: number) {
@@ -1357,11 +1649,13 @@ export function createPdfElement(
   const dynamicKey = extras?.dynamicKey ?? null;
   const def = dynamicKey ? getDynamicFieldDef(dynamicKey) : null;
   const size = def?.defaultSize ?? defaultSizeForType(type);
+  const maxDocH = A4_HEIGHT * PDF_MAX_PAGES;
+  const maxDocW = A4_HEIGHT; // landscape page width
   return {
     id: createElementId(),
     type,
-    x: Math.max(0, Math.min(x, A4_WIDTH - size.width)),
-    y: Math.max(0, Math.min(y, A4_HEIGHT * PDF_MAX_PAGES - 20)),
+    x: Math.max(0, Math.min(x, maxDocW - size.width)),
+    y: Math.max(0, Math.min(y, maxDocH - 20)),
     width: size.width,
     height: size.height,
     content: def?.label ?? defaultContentForType(type),
@@ -1513,14 +1807,17 @@ export function resolvePdfTemplateAnalysisId(template: PdfTemplate): number | nu
 
 export function pdfTemplateToStoragePayload(template: PdfTemplate): {
   elements: PdfElement[];
+  pages?: PdfPage[];
   analysisId?: number;
   analysisName?: string;
   baseAnalysisId?: number;
 } {
   const analysisId = resolvePdfTemplateAnalysisId(template);
   const baseAnalysisId = Number(template.baseAnalysisId);
+  const pages = ensureTemplatePages(template);
   return {
     elements: template.elements,
+    pages,
     ...(analysisId != null
       ? { analysisId, analysisName: template.analysisName?.trim() || "" }
       : {}),
@@ -1566,6 +1863,7 @@ export function parsePdfTemplateFromStorageText(
           fallbackName ||
           "PDF shablon",
         elements: normalizePdfElements(obj.elements),
+        pages: normalizePdfPages(obj.pages),
         createdAt: typeof obj.createdAt === "string" ? obj.createdAt : now,
         updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : now,
         storageId:

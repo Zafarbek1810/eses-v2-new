@@ -54,6 +54,7 @@ import {
   bodyCellKey,
   fetchPdfTemplatesFromApi,
   getPdfPreviewHeight,
+  getPdfPreviewWidth,
   headerCellKey,
   hydratePdfTemplateImages,
   hydratePdfTemplatesImages,
@@ -807,6 +808,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     const previewPageHeight = template
       ? getPdfPreviewHeight(template, pdfReadOnly)
       : A4_PREVIEW_HEIGHT;
+    const previewPageWidth = template
+      ? getPdfPreviewWidth(template, pdfReadOnly)
+      : A4_PREVIEW_WIDTH;
 
     return (
       <main className="flex-1 overflow-y-auto p-6 space-y-4 ses-scrollbar">
@@ -982,13 +986,13 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               <div
                 className="mx-auto"
                 style={{
-                  width: A4_PREVIEW_WIDTH * pdfZoom,
+                  width: previewPageWidth * pdfZoom,
                   height: previewPageHeight * pdfZoom,
                 }}
               >
                 <div
                   style={{
-                    width: A4_PREVIEW_WIDTH,
+                    width: previewPageWidth,
                     transform: `scale(${pdfZoom})`,
                     transformOrigin: "top left",
                   }}

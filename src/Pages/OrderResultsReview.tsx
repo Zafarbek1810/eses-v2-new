@@ -43,6 +43,7 @@ import {
   bodyCellKey,
   fetchPdfTemplatesFromApi,
   getPdfPreviewHeight,
+  getPdfPreviewWidth,
   headerCellKey,
   hydratePdfTemplateImages,
   hydratePdfTemplatesImages,
@@ -407,6 +408,9 @@ export function OrderResultsReview({
   const previewPageHeight = active?.template
     ? getPdfPreviewHeight(active.template, true)
     : A4_PREVIEW_HEIGHT;
+  const previewPageWidth = active?.template
+    ? getPdfPreviewWidth(active.template, true)
+    : A4_PREVIEW_WIDTH;
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar">
@@ -477,7 +481,7 @@ export function OrderResultsReview({
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="text-[15px] font-semibold text-foreground">
-              {isCompleted ? "Buyurtma tasdiqlangan" : "Laborant mudiri tasdiqlashi"}
+              {isCompleted ? "Buyurtma tasdiqlangan" : "Laboratoriya mudiri tasdiqlashi"}
             </h3>
             <p className="text-[12px] text-muted-foreground mt-0.5">
               {isCompleted
@@ -619,7 +623,7 @@ export function OrderResultsReview({
                 <div className="p-4 overflow-auto ses-scrollbar bg-slate-100/80 dark:bg-slate-900/40">
                   <div
                     className="mx-auto"
-                    style={{ width: A4_PREVIEW_WIDTH, minHeight: previewPageHeight }}
+                    style={{ width: previewPageWidth, minHeight: previewPageHeight }}
                   >
                     <ResultPdfCanvas
                       ref={pdfRef}

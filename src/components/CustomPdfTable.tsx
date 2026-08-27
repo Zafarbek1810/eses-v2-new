@@ -195,6 +195,8 @@ export function CustomPdfTable({
   const cellBorderStyle: CSSProperties | undefined = readOnly
     ? { border: "1px solid #000", boxSizing: "border-box" }
     : undefined;
+  /** Natija kiritilgan yacheyka — och havorang */
+  const filledCellBg = "bg-sky-100";
   const tableStyle: CSSProperties = {
     tableLayout: "fixed",
     borderCollapse: "collapse",
@@ -368,6 +370,7 @@ export function CustomPdfTable({
                   const value = hasFill
                     ? String(fillValues?.[key] ?? "")
                     : (cell.text ?? "");
+                  const hasContent = value.trim() !== "";
                   if (readOnly) {
                     return (
                       <th
@@ -375,7 +378,9 @@ export function CustomPdfTable({
                         colSpan={cs}
                         rowSpan={rs}
                         style={cellBorderStyle}
-                        className={`${cellBorder} ${pad} font-semibold text-center bg-slate-50`}
+                        className={`${cellBorder} ${pad} font-semibold text-center ${
+                          hasContent ? filledCellBg : "bg-slate-50"
+                        }`}
                       >
                         {value || "\u00a0"}
                       </th>
@@ -387,7 +392,9 @@ export function CustomPdfTable({
                       colSpan={cs}
                       rowSpan={rs}
                       style={cellBorderStyle}
-                      className={`${cellBorder} ${pad} p-0 font-semibold text-center bg-amber-50/40`}
+                      className={`${cellBorder} ${pad} p-0 font-semibold text-center ${
+                        hasContent ? filledCellBg : "bg-amber-50/40"
+                      }`}
                     >
                       <input
                         value={value}
@@ -515,6 +522,7 @@ export function CustomPdfTable({
                     const value = hasFill
                       ? String(fillValues?.[key] ?? "")
                       : (cell.text ?? "");
+                    const hasContent = value.trim() !== "";
                     if (readOnly) {
                       return (
                         <td
@@ -522,7 +530,9 @@ export function CustomPdfTable({
                           colSpan={cs}
                           rowSpan={rs}
                           style={cellBorderStyle}
-                          className={`${cellBorder} ${pad} text-center`}
+                          className={`${cellBorder} ${pad} text-center ${
+                            hasContent ? filledCellBg : ""
+                          }`}
                         >
                           {value || "\u00a0"}
                         </td>
@@ -533,7 +543,9 @@ export function CustomPdfTable({
                         key={ci}
                         colSpan={cs}
                         rowSpan={rs}
-                        className={`${cellBorder} ${pad} text-center p-0`}
+                        className={`${cellBorder} ${pad} text-center p-0 ${
+                          hasContent ? filledCellBg : ""
+                        }`}
                       >
                         <input
                           value={value}
