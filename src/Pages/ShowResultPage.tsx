@@ -459,6 +459,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
                   fillValues={state.fillValues}
                   dynamicCtx={state.dynamicCtx}
                   readOnly
+                  withMargins
                 />
               </div>
             </div>

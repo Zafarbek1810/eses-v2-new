@@ -27,14 +27,13 @@ export const ResultPdfCanvas = React.forwardRef<
     dynamicCtx: PdfDynamicContext | null;
     onFillChange?: (key: string, value: string) => void;
     readOnly?: boolean;
+    /** Print/export: top+bottom page margin so table splits aren't flush to edges. */
+    withMargins?: boolean;
   }
 >(function ResultPdfCanvas(
-  { template, fillValues, dynamicCtx, onFillChange, readOnly = false },
+  { template, fillValues, dynamicCtx, onFillChange, readOnly = false, withMargins = false },
   ref,
 ) {
-  // Export / public view: each page has top+bottom margin so splits aren't flush to edges.
-  // Edit mode: continuous canvas so inputs stay a single DOM tree.
-  const withMargins = readOnly;
   const layouts = getTemplatePageLayouts(template, withMargins);
   const width = getPdfPreviewWidth(template, withMargins);
   const height = getPdfPreviewHeight(template, withMargins);

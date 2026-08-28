@@ -1004,6 +1004,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                     dynamicCtx={dynamicCtx}
                     onFillChange={canEditResults ? updateFill : undefined}
                     readOnly={pdfReadOnly}
+                    withMargins={pdfReadOnly}
                   />
                 </div>
               </div>

@@ -631,6 +631,7 @@ export function OrderResultsReview({
                       fillValues={active.fillValues}
                       dynamicCtx={active.dynamicCtx}
                       readOnly
+                      withMargins
                     />
                   </div>
                 </div>
