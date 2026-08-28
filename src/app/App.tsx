@@ -62,7 +62,7 @@ import {
 } from "@/lib/wallpapers";
 import sesLogo from "@/images/ses.jpg";
 import { DashboardParticles } from "@/components/DashboardParticles";
-import { openDeviceHrApp } from "@/lib/deviceApp";
+import { bootstrapDevHrTab, openDeviceHrAppSync } from "@/lib/deviceApp";
 
 /** User-menu pages — available to every authenticated role. */
 const USER_PAGE_IDS = ["profile", "edit-profile", "settings"] as const;
@@ -1161,14 +1161,21 @@ const Dashboard = ({
     if (id === "hr") {
       if (hrOpeningRef.current) return;
       hrOpeningRef.current = true;
-      void openDeviceHrApp()
-        .catch(error => {
-          const message = error instanceof Error ? error.message : "HR ochilmadi";
-          window.alert(message);
-        })
-        .finally(() => {
-          hrOpeningRef.current = false;
-        });
+
+      const tab = openDeviceHrAppSync();
+
+      if (import.meta.env.DEV) {
+        void bootstrapDevHrTab(tab)
+          .catch(error => {
+            const message = error instanceof Error ? error.message : "HR ochilmadi";
+            window.alert(message);
+          })
+          .finally(() => {
+            hrOpeningRef.current = false;
+          });
+      } else {
+        hrOpeningRef.current = false;
+      }
       return;
     }
     setSelectedCompany(null);

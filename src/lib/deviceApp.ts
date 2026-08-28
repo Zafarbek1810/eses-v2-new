@@ -31,6 +31,24 @@ function writeLoadingPage(tab: Window) {
   }
 }
 
+/** Brauzer popup bloklamasligi uchun <a> orqali ochish (production uchun eng ishonchli). */
+function openViaAnchor(url: string): void {
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function openBlankTab(): Window | null {
+  const tab = window.open("about:blank", "_blank");
+  if (tab) tab.opener = null;
+  return tab;
+}
+
 /** Dev: Vite middleware orqali Hikvision backend + frontendni ishga tushiradi. */
 async function ensureHrAppRunningDev(): Promise<string> {
   const response = await fetch("/api/device/start", { method: "POST" });
@@ -57,43 +75,52 @@ export async function ensureHrAppRunning(): Promise<string> {
 /** @deprecated ensureHrAppRunning ga o'ting */
 export const ensureDeviceAppRunning = ensureHrAppRunning;
 
-function openLocalHrTab(): Window | null {
-  const tab = window.open(HR_APP_URL, "_blank", "noopener,noreferrer");
-  if (!tab) {
-    throw new Error(
-      `Popup bloklandi. Qo'lda oching: ${HR_APP_URL}\n\nKompyuteringizda Hikvision ishga tushiring:\n  cd NodeJS_Hikvision && npm start\n  cd Hikvision && npm run dev`,
-    );
+/**
+ * HR tabini darhol ochadi — faqat click handler ichida chaqiring (sync).
+ * Production: localhost anchor orqali (popup bloklanmaydi).
+ * Dev: about:blank tab + keyin bootstrapDevHrTab.
+ */
+export function openDeviceHrAppSync(): Window | null {
+  if (!IS_DEV) {
+    openViaAnchor(HR_APP_URL);
+    return null;
   }
-  tab.opener = null;
-  return tab;
+  return openBlankTab();
 }
 
-/** Hikvision HR sahifasini yangi tabda ochadi (production: localhost, dev: avtomatik ishga tushirish). */
-export async function openDeviceHrApp(): Promise<Window | null> {
-  // Production (eses.uz): server domeni emas, foydalanuvchi kompyuteridagi localhost.
-  if (!IS_DEV) {
-    return openLocalHrTab();
+/** Dev rejimida ochilgan tabni Hikvision URL ga yo'naltiradi. */
+export async function bootstrapDevHrTab(tab: Window | null): Promise<void> {
+  if (!IS_DEV) return;
+
+  if (!tab) {
+    throw new Error(
+      "Popup bloklandi. Brauzer sozlamalaridan popup ga ruxsat bering yoki qo'lda oching: "
+      + HR_APP_URL,
+    );
   }
 
-  const tab = window.open("about:blank", "_blank");
-  if (tab) {
-    tab.opener = null;
-    writeLoadingPage(tab);
-  }
+  writeLoadingPage(tab);
 
   try {
     const url = await ensureHrAppRunningDev();
-
-    if (tab && !tab.closed) {
+    if (!tab.closed) {
       tab.location.replace(url);
-      return tab;
     }
-
-    const fallback = window.open(url, "_blank", "noopener,noreferrer");
-    if (!fallback) window.location.assign(url);
-    return fallback ?? tab;
   } catch (error) {
-    if (tab && !tab.closed) tab.close();
+    if (!tab.closed) tab.close();
     throw error;
   }
+}
+
+/** @deprecated openDeviceHrAppSync + bootstrapDevHrTab dan foydalaning */
+export async function openDeviceHrApp(): Promise<Window | null> {
+  const tab = openDeviceHrAppSync();
+  await bootstrapDevHrTab(tab);
+  return tab;
+}
+
+export function showHrBlockedHelp(): void {
+  window.alert(
+    `HR ochilmadi.\n\n1) Brauzer popup blokini o'chiring\n2) Yoki qo'lda oching: ${HR_APP_URL}\n\nKompyuteringizda ishga tushiring:\n  cd NodeJS_Hikvision && npm start\n  cd Hikvision && npm run dev`,
+  );
 }
