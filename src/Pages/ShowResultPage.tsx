@@ -315,11 +315,11 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
 
   const previewPageHeight =
     state.status === "ready"
-      ? getPdfPreviewHeight(state.template, true)
+      ? getPdfPreviewHeight(state.template)
       : A4_PREVIEW_HEIGHT;
   const previewPageWidth =
     state.status === "ready"
-      ? getPdfPreviewWidth(state.template, true)
+      ? getPdfPreviewWidth(state.template)
       : A4_PREVIEW_WIDTH;
 
   return (
@@ -459,7 +459,6 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
                   fillValues={state.fillValues}
                   dynamicCtx={state.dynamicCtx}
                   readOnly
-                  withMargins
                 />
               </div>
             </div>

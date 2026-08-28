@@ -776,7 +776,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
 
     setPrinting(true);
     try {
-      // Kassir already views with margins; others briefly switch to export layout
+      // Chop etish paytida tahrirlashni vaqtincha o'chirish
       if (canEditResults) {
         flushSync(() => setExporting(true));
         await new Promise(r => setTimeout(r, 80));
@@ -806,10 +806,10 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     const grid = normalizeTableData(tableEl?.tableData);
     const pdfReadOnly = exporting || !canEditResults;
     const previewPageHeight = template
-      ? getPdfPreviewHeight(template, pdfReadOnly)
+      ? getPdfPreviewHeight(template)
       : A4_PREVIEW_HEIGHT;
     const previewPageWidth = template
-      ? getPdfPreviewWidth(template, pdfReadOnly)
+      ? getPdfPreviewWidth(template)
       : A4_PREVIEW_WIDTH;
 
     return (
@@ -1004,7 +1004,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                     dynamicCtx={dynamicCtx}
                     onFillChange={canEditResults ? updateFill : undefined}
                     readOnly={pdfReadOnly}
-                    withMargins={pdfReadOnly}
                   />
                 </div>
               </div>

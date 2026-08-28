@@ -2,7 +2,7 @@ const AI_CHAT_URL = "https://mental.5858.uz/root/nexus_sendMsg_https";
 // const AI_CHAT_TOKEN =
 //   "example_token";
 const AI_CHAT_TOKEN =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiZW1haWwiOiJhYmR1bGxhZXZkYWRheG9uN0BnbWFpbC5jb20iLCJpYXQiOjE3ODc2OTU1MTl9.ckBSx-XCd6hax-EajYyhZNPv089GoSZ9NYkcIxfLo0k";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6NywiZW1haWwiOiJhYmR1bGxhZXZkMzQ4QGdtYWlsLmNvbSIsImlhdCI6MTc4NzgzNzUzOX0.DxAHQoPZXzzYdcrcyx1RGIEchP6Mo6JTSGSAceBCrnE";
 
 export type SendAiMessageOptions = {
   msg: string;
