@@ -1,6 +1,7 @@
 packages:
   - '.'
-  - 'device'
+  - 'Hikvision'
+  - 'NodeJS_Hikvision'
 supportedArchitectures:
   os:
     - linux

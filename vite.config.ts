@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { createDeviceLauncherMiddleware } from './server/deviceLauncher'
+import { createHrLauncherMiddleware } from './server/deviceLauncher'
 
 function figmaAssetResolver() {
   return {
@@ -18,22 +18,25 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const deviceEnv = loadEnv(mode, path.resolve(__dirname, 'device'), '')
+  const hikvisionEnv = loadEnv(mode, path.resolve(__dirname, 'Hikvision'), '')
   const backendUrl = (env.VITE_API_BASE_URL || 'https://eses.uz/api').replace(/\/$/, '')
-  const devicePort = Number(env.DEVICE_PORT || deviceEnv.DEVICE_PORT || 5180)
+  const hikvisionFrontendPort = Number(env.HIKVISION_FRONTEND_PORT || hikvisionEnv.HIKVISION_FRONTEND_PORT || 5175)
+  const hikvisionBackendPort = Number(env.HIKVISION_BACKEND_PORT || hikvisionEnv.HIKVISION_BACKEND_PORT || 3001)
 
   const proxyPaths = ['/user', '/role', '/laboratory', '/baselaboratory', '/patient', '/region', '/analysis', '/baseanalysis', '/order', '/pattern', '/result', '/company', '/onlinestorage', '/globalstorage', '/plan', '/subscription'] as const
   const proxy = Object.fromEntries(
     proxyPaths.map(p => [p, { target: backendUrl, changeOrigin: true }]),
   )
 
-  const deviceLauncher = command === 'serve'
+  const hrLauncher = command === 'serve'
     ? {
-        name: 'device-launcher',
-        configureServer(server: { middlewares: { use: (fn: ReturnType<typeof createDeviceLauncherMiddleware>) => void } }) {
-          server.middlewares.use(createDeviceLauncherMiddleware({
-            port: devicePort,
-            deviceDir: path.resolve(__dirname, 'device'),
+        name: 'hr-launcher',
+        configureServer(server: { middlewares: { use: (fn: ReturnType<typeof createHrLauncherMiddleware>) => void } }) {
+          server.middlewares.use(createHrLauncherMiddleware({
+            frontendPort: hikvisionFrontendPort,
+            backendPort: hikvisionBackendPort,
+            frontendDir: path.resolve(__dirname, 'Hikvision'),
+            backendDir: path.resolve(__dirname, 'NodeJS_Hikvision'),
           }))
         },
       }
@@ -46,7 +49,7 @@ export default defineConfig(({ mode, command }) => {
       // Tailwind is not being actively used – do not remove them
       react(),
       tailwindcss(),
-      ...(deviceLauncher ? [deviceLauncher] : []),
+      ...(hrLauncher ? [hrLauncher] : []),
     ],
     resolve: {
       alias: {

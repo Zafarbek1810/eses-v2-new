@@ -8,13 +8,16 @@ import type { Connect } from "vite";
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export type DeviceLauncherOptions = {
-  port: number;
-  deviceDir?: string;
+export type HrLauncherOptions = {
+  frontendPort: number;
+  backendPort: number;
+  frontendDir?: string;
+  backendDir?: string;
   startupTimeoutMs?: number;
 };
 
-let deviceProcess: ChildProcess | null = null;
+let backendProcess: ChildProcess | null = null;
+let frontendProcess: ChildProcess | null = null;
 let startingPromise: Promise<void> | null = null;
 
 function sendJson(res: ServerResponse, status: number, payload: unknown) {
@@ -45,7 +48,19 @@ async function checkPort(port: number): Promise<boolean> {
   return (await checkPortOnHost(port, "127.0.0.1")) || (await checkPortOnHost(port, "::1"));
 }
 
-async function isDeviceServerUp(port: number): Promise<boolean> {
+async function isBackendUp(port: number): Promise<boolean> {
+  if (!(await checkPort(port))) return false;
+  try {
+    const response = await fetch(`http://localhost:${port}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    return response.ok;
+  } catch {
+    return true;
+  }
+}
+
+async function isFrontendUp(port: number): Promise<boolean> {
   if (!(await checkPort(port))) return false;
   try {
     const response = await fetch(`http://localhost:${port}/`, {
@@ -53,22 +68,25 @@ async function isDeviceServerUp(port: number): Promise<boolean> {
     });
     return response.status < 500;
   } catch {
-    // Port ochiq, lekin HTTP hali tayyor emas.
     return true;
   }
 }
 
-function logDeviceOutput(chunk: Buffer) {
+async function isHrStackUp(frontendPort: number, backendPort: number): Promise<boolean> {
+  return (await isBackendUp(backendPort)) && (await isFrontendUp(frontendPort));
+}
+
+function logOutput(prefix: string, chunk: Buffer) {
   for (const line of chunk.toString().split("\n").filter(Boolean)) {
-    console.log(`[device] ${line}`);
+    console.log(`[${prefix}] ${line}`);
   }
 }
 
-function watchChildFailure(child: ChildProcess): Promise<never> {
+function watchChildFailure(child: ChildProcess, label: string): Promise<never> {
   return new Promise((_, reject) => {
     child.once("exit", code => {
       if (code != null && code !== 0) {
-        reject(new Error(`Device server ishga tushmadi (code: ${code})`));
+        reject(new Error(`${label} ishga tushmadi (code: ${code})`));
       }
     });
     child.once("error", error => {
@@ -77,64 +95,127 @@ function watchChildFailure(child: ChildProcess): Promise<never> {
   });
 }
 
-async function waitUntilDeviceReady(port: number, timeoutMs: number, child: ChildProcess): Promise<void> {
+async function waitUntilBackendReady(port: number, timeoutMs: number): Promise<void> {
   const started = Date.now();
-
   while (Date.now() - started < timeoutMs) {
-    if (await isDeviceServerUp(port)) return;
+    if (await isBackendUp(port)) return;
     await sleep(400);
   }
-
-  throw new Error(`Device server ${port} portda ishga tushmadi`);
+  throw new Error(`Hikvision backend ${port} portda ishga tushmadi`);
 }
 
-async function startDeviceProcess(options: DeviceLauncherOptions): Promise<void> {
-  const { port, deviceDir = path.join(ROOT_DIR, "device"), startupTimeoutMs = 60_000 } = options;
-  const deviceEnv = loadEnv("development", deviceDir, "");
+async function waitUntilFrontendReady(port: number, timeoutMs: number): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await isFrontendUp(port)) return;
+    await sleep(400);
+  }
+  throw new Error(`Hikvision frontend ${port} portda ishga tushmadi`);
+}
 
-  if (await isDeviceServerUp(port)) return;
+async function startBackendProcess(
+  backendDir: string,
+  backendPort: number,
+  startupTimeoutMs: number,
+): Promise<void> {
+  if (await isBackendUp(backendPort)) return;
 
-  if (deviceProcess && deviceProcess.exitCode == null) {
+  if (backendProcess && backendProcess.exitCode == null) {
     await Promise.race([
-      waitUntilDeviceReady(port, startupTimeoutMs, deviceProcess),
-      watchChildFailure(deviceProcess),
+      waitUntilBackendReady(backendPort, startupTimeoutMs),
+      watchChildFailure(backendProcess, "hikvision-backend"),
     ]);
     return;
   }
 
-  deviceProcess = spawn(
+  backendProcess = spawn("node", ["server.js"], {
+    cwd: backendDir,
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      PORT: String(backendPort),
+    },
+    shell: true,
+  });
+
+  backendProcess.stdout?.on("data", chunk => logOutput("hikvision-backend", chunk));
+  backendProcess.stderr?.on("data", chunk => logOutput("hikvision-backend", chunk));
+  backendProcess.on("exit", code => {
+    console.log(`[hikvision-backend] jarayon tugadi (code: ${code ?? "?"})`);
+    backendProcess = null;
+  });
+
+  await Promise.race([
+    waitUntilBackendReady(backendPort, startupTimeoutMs),
+    watchChildFailure(backendProcess, "hikvision-backend"),
+  ]);
+}
+
+async function startFrontendProcess(
+  frontendDir: string,
+  frontendPort: number,
+  startupTimeoutMs: number,
+): Promise<void> {
+  const frontendEnv = loadEnv("development", frontendDir, "");
+
+  if (await isFrontendUp(frontendPort)) return;
+
+  if (frontendProcess && frontendProcess.exitCode == null) {
+    await Promise.race([
+      waitUntilFrontendReady(frontendPort, startupTimeoutMs),
+      watchChildFailure(frontendProcess, "hikvision-frontend"),
+    ]);
+    return;
+  }
+
+  frontendProcess = spawn(
     "npx",
-    ["vite", "--port", String(port), "--strictPort"],
+    ["vite", "--port", String(frontendPort), "--strictPort"],
     {
-      cwd: deviceDir,
+      cwd: frontendDir,
       stdio: "pipe",
       env: {
         ...process.env,
-        ...deviceEnv,
-        DEVICE_PORT: String(port),
+        ...frontendEnv,
+        HIKVISION_FRONTEND_PORT: String(frontendPort),
       },
       shell: true,
     },
   );
 
-  deviceProcess.stdout?.on("data", logDeviceOutput);
-  deviceProcess.stderr?.on("data", logDeviceOutput);
-  deviceProcess.on("exit", code => {
-    console.log(`[device] jarayon tugadi (code: ${code ?? "?"})`);
-    deviceProcess = null;
+  frontendProcess.stdout?.on("data", chunk => logOutput("hikvision-frontend", chunk));
+  frontendProcess.stderr?.on("data", chunk => logOutput("hikvision-frontend", chunk));
+  frontendProcess.on("exit", code => {
+    console.log(`[hikvision-frontend] jarayon tugadi (code: ${code ?? "?"})`);
+    frontendProcess = null;
   });
 
   await Promise.race([
-    waitUntilDeviceReady(port, startupTimeoutMs, deviceProcess),
-    watchChildFailure(deviceProcess),
+    waitUntilFrontendReady(frontendPort, startupTimeoutMs),
+    watchChildFailure(frontendProcess, "hikvision-frontend"),
   ]);
 }
 
-export async function ensureDeviceServerRunning(options: DeviceLauncherOptions): Promise<void> {
-  if (await isDeviceServerUp(options.port)) return;
+async function startHrStack(options: HrLauncherOptions): Promise<void> {
+  const {
+    frontendPort,
+    backendPort,
+    frontendDir = path.join(ROOT_DIR, "Hikvision"),
+    backendDir = path.join(ROOT_DIR, "NodeJS_Hikvision"),
+    startupTimeoutMs = 60_000,
+  } = options;
+
+  if (await isHrStackUp(frontendPort, backendPort)) return;
+
+  await startBackendProcess(backendDir, backendPort, startupTimeoutMs);
+  await startFrontendProcess(frontendDir, frontendPort, startupTimeoutMs);
+}
+
+export async function ensureHrAppRunning(options: HrLauncherOptions): Promise<void> {
+  if (await isHrStackUp(options.frontendPort, options.backendPort)) return;
 
   if (!startingPromise) {
-    startingPromise = startDeviceProcess(options).finally(() => {
+    startingPromise = startHrStack(options).finally(() => {
       startingPromise = null;
     });
   }
@@ -142,7 +223,7 @@ export async function ensureDeviceServerRunning(options: DeviceLauncherOptions):
   await startingPromise;
 }
 
-export function createDeviceLauncherMiddleware(options: DeviceLauncherOptions): Connect.NextHandleFunction {
+export function createHrLauncherMiddleware(options: HrLauncherOptions): Connect.NextHandleFunction {
   return async (req, res, next) => {
     const pathname = req.url?.split("?")[0];
     if (pathname !== "/api/device/start") return next();
@@ -152,20 +233,30 @@ export function createDeviceLauncherMiddleware(options: DeviceLauncherOptions): 
     }
 
     try {
-      const alreadyRunning = await isDeviceServerUp(options.port);
+      const alreadyRunning = await isHrStackUp(options.frontendPort, options.backendPort);
       if (!alreadyRunning) {
-        await ensureDeviceServerRunning(options);
+        await ensureHrAppRunning(options);
       }
 
       sendJson(res, 200, {
         ok: true,
         running: true,
-        url: `http://localhost:${options.port}`,
+        url: `http://localhost:${options.frontendPort}`,
+        backendUrl: `http://localhost:${options.backendPort}`,
         started: !alreadyRunning,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Device server ishga tushmadi";
+      const message = error instanceof Error ? error.message : "HR server ishga tushmadi";
       sendJson(res, 500, { ok: false, error: message });
     }
   };
 }
+
+/** @deprecated HrLauncherOptions ga o'ting */
+export type DeviceLauncherOptions = HrLauncherOptions;
+
+/** @deprecated ensureHrAppRunning ga o'ting */
+export const ensureDeviceServerRunning = ensureHrAppRunning;
+
+/** @deprecated createHrLauncherMiddleware ga o'ting */
+export const createDeviceLauncherMiddleware = createHrLauncherMiddleware;

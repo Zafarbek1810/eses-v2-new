@@ -6,9 +6,9 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "dev:device": "pnpm --dir device dev",
-    "dev:hikvision": "pnpm --dir device server",
-    "build:device": "pnpm --dir device build"
+    "dev:hikvision-frontend": "pnpm --dir Hikvision dev",
+    "dev:hikvision-backend": "pnpm --dir NodeJS_Hikvision start",
+    "build:hikvision": "pnpm --dir Hikvision build"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

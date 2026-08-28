@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
-device/node_modules/
+Hikvision/node_modules/
+NodeJS_Hikvision/node_modules/
 
 # Build
 dist/
