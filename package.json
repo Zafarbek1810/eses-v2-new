@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "dev:device": "pnpm --dir device dev",
+    "dev:hikvision": "pnpm --dir device server",
+    "build:device": "pnpm --dir device build"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

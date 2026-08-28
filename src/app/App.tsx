@@ -62,6 +62,7 @@ import {
 } from "@/lib/wallpapers";
 import sesLogo from "@/images/ses.jpg";
 import { DashboardParticles } from "@/components/DashboardParticles";
+import { openDeviceHrApp } from "@/lib/deviceApp";
 
 /** User-menu pages — available to every authenticated role. */
 const USER_PAGE_IDS = ["profile", "edit-profile", "settings"] as const;
@@ -149,6 +150,7 @@ const NAV_ITEMS: NavItem[] = [
       { id: "global-templates", label: "Global shablonlar", icon: FileType },
     ],
   },
+  { id: "hr", label: "HR", icon: Users, section: "main" },
   { id: "ai-demo", label: "Sun'iy intelekt (demo)", icon: Sparkles, section: "main" },
   // { id: "employees", label: "Employees", icon: Users, section: "main" },
 ];
@@ -1137,6 +1139,7 @@ const Dashboard = ({
   const [editPatientId, setEditPatientId] = useState<number | null>(null);
   const [companiesRegionId, setCompaniesRegionId] = useState<number | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  const hrOpeningRef = useRef(false);
   const activeWallpaper = wallpaperSrc(wallpaperId);
 
   useEffect(() => {
@@ -1155,6 +1158,19 @@ const Dashboard = ({
 
   const handleNavChange = (id: string) => {
     if (!canAccessNav(roleName, id)) return;
+    if (id === "hr") {
+      if (hrOpeningRef.current) return;
+      hrOpeningRef.current = true;
+      void openDeviceHrApp()
+        .catch(error => {
+          const message = error instanceof Error ? error.message : "HR ochilmadi";
+          window.alert(message);
+        })
+        .finally(() => {
+          hrOpeningRef.current = false;
+        });
+      return;
+    }
     setSelectedCompany(null);
     setActiveNav(id);
     if (id !== "kassa") setOrderPatientId(null);

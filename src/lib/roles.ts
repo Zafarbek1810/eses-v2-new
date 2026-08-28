@@ -25,6 +25,7 @@ export type NavId =
   | "orders"
   | "results"
   | "employees"
+  | "hr"
   | "ai-demo";
 
 const NAV_GROUP_CHILDREN: Partial<Record<NavId, readonly NavId[]>> = {
@@ -37,6 +38,7 @@ const ROLE_NAV: Record<AppRole, readonly NavId[]> = {
   director: [
     "dashboard",
     "management",
+    "hr",
     "ai-demo",
     // "patients",
     // "kassa",

@@ -1,5 +1,6 @@
 packages:
   - '.'
+  - 'device'
 supportedArchitectures:
   os:
     - linux
