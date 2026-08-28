@@ -2,6 +2,7 @@
 node_modules/
 Hikvision/node_modules/
 NodeJS_Hikvision/node_modules/
+hr-launcher/node_modules/
 
 # Build
 dist/

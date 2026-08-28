@@ -8,6 +8,7 @@
     "dev": "vite",
     "dev:hikvision-frontend": "pnpm --dir Hikvision dev",
     "dev:hikvision-backend": "pnpm --dir NodeJS_Hikvision start",
+    "hr:launcher": "pnpm --dir hr-launcher start",
     "build:hikvision": "pnpm --dir Hikvision build"
   },
   "dependencies": {
