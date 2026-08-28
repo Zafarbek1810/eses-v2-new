@@ -40,6 +40,7 @@ import {
   getPdfPreviewHeight,
   getPdfPreviewWidth,
   getTemplatePageLayouts,
+  hydratePdfTemplateImages,
   loadPdfTemplates,
   mergeBodySelection,
   mergeHeaderSelection,
@@ -74,6 +75,25 @@ import {
 } from "@/lib/pdfTemplate";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
+
+function upsertTemplateInList(list: PdfTemplate[], item: PdfTemplate): PdfTemplate[] {
+  const clone = structuredClone(item);
+  const idx = list.findIndex(t => t.id === clone.id);
+  if (idx >= 0) {
+    const next = [...list];
+    next[idx] = clone;
+    return next;
+  }
+  return [clone, ...list];
+}
+
+async function prepareTemplateForEditor(
+  source: PdfTemplate,
+  list: PdfTemplate[],
+): Promise<{ template: PdfTemplate; list: PdfTemplate[] }> {
+  const hydrated = await hydratePdfTemplateImages(structuredClone(source));
+  return { template: hydrated, list: upsertTemplateInList(list, hydrated) };
+}
 
 function laboratoryCompanyId(lab: Laboratory): number | null {
   const value = lab.company?.id ?? lab.company_id ?? lab.companyId;
@@ -333,6 +353,7 @@ export function PdfTemplateSection({
   const canvasRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const propsPanelRef = useRef<HTMLDivElement>(null);
+  const templateLoadSeq = useRef(0);
 
   const selected = useMemo(
     () => template.elements.find(e => e.id === selectedId) ?? null,
@@ -471,13 +492,15 @@ export function PdfTemplateSection({
     );
 
     if (openForAnalysis.hasTemplate && existing.length > 0) {
-      const found = existing[0];
-      setTemplate(structuredClone(found));
-      setSelectedId(null);
-      setEditingId(null);
-      setTableSel(null);
-      setActiveTemplateId(found.id);
-      setEditorOpen(true);
+      void prepareTemplateForEditor(existing[0], templates).then(({ template: hydrated, list }) => {
+        setTemplates(list);
+        setTemplate(hydrated);
+        setSelectedId(null);
+        setEditingId(null);
+        setTableSel(null);
+        setActiveTemplateId(hydrated.id);
+        setEditorOpen(true);
+      });
     } else {
       const t = emptyTemplate({ id: analysis.id, name: analysis.name });
       setTemplate(t);
@@ -680,7 +703,7 @@ export function PdfTemplateSection({
     try {
       const saved = await upsertPdfTemplateRemote(template, scopedCompanyId);
       setTemplate(saved);
-      setTemplates(loadPdfTemplates());
+      setTemplates(prev => upsertTemplateInList(prev, saved));
       pushToast("PDF shablon bazaga saqlandi");
     } catch (err) {
       pushToast(
@@ -773,10 +796,14 @@ export function PdfTemplateSection({
     setPendingImport(null);
   };
 
-  const handleLoad = (id: string) => {
+  const handleLoad = async (id: string) => {
     const found = templates.find(t => t.id === id);
     if (!found) return;
-    setTemplate(structuredClone(found));
+    const seq = ++templateLoadSeq.current;
+    const { template: hydrated, list } = await prepareTemplateForEditor(found, templates);
+    if (seq !== templateLoadSeq.current) return;
+    setTemplates(list);
+    setTemplate(hydrated);
     setSelectedId(null);
     setEditingId(null);
     setTableSel(null);
@@ -784,7 +811,7 @@ export function PdfTemplateSection({
     setActiveTemplateId(id);
     setIsGlobalEditMode(false);
     setEditorOpen(true);
-    const analysisId = resolvePdfTemplateAnalysisId(found);
+    const analysisId = resolvePdfTemplateAnalysisId(hydrated);
     if (analysisId) {
       const analysis = analyses.find(a => a.id === analysisId);
       if (analysis?.laboratory?.id) {
@@ -792,6 +819,39 @@ export function PdfTemplateSection({
       }
       setFilterAnalysisId(String(analysisId));
     }
+  };
+
+  const handleFilterAnalysisChange = async (nextId: string) => {
+    const seq = ++templateLoadSeq.current;
+    let list = templates;
+    if (editorOpen && template.id) {
+      list = upsertTemplateInList(templates, template);
+      setTemplates(list);
+    }
+
+    setFilterAnalysisId(nextId);
+    if (!nextId) {
+      setEditorOpen(false);
+      return;
+    }
+
+    const analysisId = Number(nextId);
+    const match = list.filter(t => resolvePdfTemplateAnalysisId(t) === analysisId);
+    if (match.length === 0) {
+      setEditorOpen(false);
+      return;
+    }
+
+    const { template: hydrated, list: nextList } = await prepareTemplateForEditor(match[0], list);
+    if (seq !== templateLoadSeq.current) return;
+    setTemplates(nextList);
+    setTemplate(hydrated);
+    setSelectedId(null);
+    setEditingId(null);
+    setTableSel(null);
+    setActiveTemplateId(hydrated.id);
+    setIsGlobalEditMode(false);
+    setEditorOpen(true);
   };
 
   const handleDeleteTemplate = async () => {
@@ -941,28 +1001,7 @@ export function PdfTemplateSection({
               value={filterAnalysisId}
               disabled={!filterLabId}
               onChange={e => {
-                const nextId = e.target.value;
-                setFilterAnalysisId(nextId);
-                if (!nextId) {
-                  setEditorOpen(false);
-                  return;
-                }
-                const analysisId = Number(nextId);
-                const match = (Array.isArray(templates) ? templates : []).filter(
-                  t => resolvePdfTemplateAnalysisId(t) === analysisId,
-                );
-                if (match.length === 0) {
-                  setEditorOpen(false);
-                  return;
-                }
-                const found = match[0];
-                setTemplate(structuredClone(found));
-                setSelectedId(null);
-                setEditingId(null);
-                setTableSel(null);
-                setActiveTemplateId(found.id);
-                setIsGlobalEditMode(false);
-                setEditorOpen(true);
+                void handleFilterAnalysisChange(e.target.value);
               }}
               className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px] disabled:opacity-60"
             >
@@ -979,7 +1018,7 @@ export function PdfTemplateSection({
               }
               disabled={!filterAnalysisId}
               onChange={e => {
-                if (e.target.value) handleLoad(e.target.value);
+                if (e.target.value) void handleLoad(e.target.value);
               }}
               className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[220px] disabled:opacity-60"
             >
