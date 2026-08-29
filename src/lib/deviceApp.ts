@@ -1,7 +1,7 @@
 const DEFAULT_HR_APP_URL = "http://localhost:5175";
 const DEFAULT_HR_LAUNCHER_URL = "http://localhost:5198";
 const HR_PROTOCOL = "ses-hr://start";
-const LAUNCHER_WAIT_MS = 45_000;
+const LAUNCHER_WAIT_MS = 60_000;
 
 export const HR_APP_URL =
   (import.meta.env.VITE_HR_APP_URL as string | undefined)?.replace(/\/$/, "")
@@ -24,6 +24,12 @@ type HrStartResponse = {
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isMacOs(): boolean {
+  const platform = navigator.userAgentData?.platform ?? navigator.platform ?? "";
+  if (/mac/i.test(platform)) return true;
+  return /Mac/i.test(navigator.userAgent);
 }
 
 function writeLoadingPage(tab: Window, message: string) {
@@ -51,7 +57,10 @@ function openBlankTab(): Window | null {
 async function isLauncherUp(): Promise<boolean> {
   try {
     const response = await fetch(`${HR_LAUNCHER_URL}/health`, {
-      signal: AbortSignal.timeout(2000),
+      method: "GET",
+      mode: "cors",
+      credentials: "omit",
+      signal: AbortSignal.timeout(3000),
     });
     return response.ok;
   } catch {
@@ -59,7 +68,6 @@ async function isLauncherUp(): Promise<boolean> {
   }
 }
 
-/** Windows: ses-hr:// protokoli orqali start.bat ni chaqiradi. */
 function triggerLocalLauncherStart(): void {
   const link = document.createElement("a");
   link.href = HR_PROTOCOL;
@@ -70,19 +78,20 @@ function triggerLocalLauncherStart(): void {
 }
 
 function installHelpMessage(): string {
-  const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-  if (isMac) {
+  if (isMacOs()) {
     return [
-      "HR launcher o'rnatilmagan yoki ishlamayapti.",
+      "HR launcher topilmadi.",
       "",
-      "Bir marta ishga tushiring:",
-      "  hr-launcher/install-mac.command",
+      "Terminalda loyiha papkasida bir marta ishga tushiring:",
+      "  chmod +x hr-launcher/install-mac.command",
+      "  ./hr-launcher/install-mac.command",
       "",
+      "Chrome \"local network\" ruxsatini so'rasa — Allow bosing.",
       "Keyin eses.uz da HR ni qayta bosing.",
     ].join("\n");
   }
   return [
-    "HR launcher o'rnatilmagan yoki ishlamayapti.",
+    "HR launcher topilmadi.",
     "",
     "Bir marta ishga tushiring:",
     "  hr-launcher\\install-windows.bat",
@@ -93,13 +102,27 @@ function installHelpMessage(): string {
 
 async function waitForLauncher(tab: Window | null): Promise<void> {
   const started = Date.now();
+  let lastTrigger = 0;
+
   while (Date.now() - started < LAUNCHER_WAIT_MS) {
     if (await isLauncherUp()) return;
-    if (tab && !tab.closed) {
-      writeLoadingPage(tab, "HR launcher ishga tushirilmoqda...");
+
+    const elapsed = Date.now() - started;
+    if (elapsed - lastTrigger > 4000) {
+      triggerLocalLauncherStart();
+      lastTrigger = elapsed;
     }
-    await sleep(800);
+
+    if (tab && !tab.closed) {
+      const sec = Math.ceil((LAUNCHER_WAIT_MS - elapsed) / 1000);
+      writeLoadingPage(
+        tab,
+        `HR launcher ishga tushirilmoqda… (${sec}s)\nChrome ruxsat so'rasa — Allow bosing.`,
+      );
+    }
+    await sleep(1000);
   }
+
   throw new Error(installHelpMessage());
 }
 
@@ -107,7 +130,7 @@ async function ensureLocalLauncherRunning(tab: Window | null): Promise<void> {
   if (await isLauncherUp()) return;
 
   if (tab && !tab.closed) {
-    writeLoadingPage(tab, "HR launcher ishga tushirilmoqda...");
+    writeLoadingPage(tab, "HR launcher ishga tushirilmoqda…");
   }
 
   triggerLocalLauncherStart();
@@ -129,13 +152,15 @@ async function ensureHrAppRunningLocal(tab: Window | null): Promise<string> {
   await ensureLocalLauncherRunning(tab);
 
   if (tab && !tab.closed) {
-    writeLoadingPage(tab, "Hikvision frontend va backend ishga tushirilmoqda...");
+    writeLoadingPage(tab, "Hikvision frontend va backend ishga tushirilmoqda…");
   }
 
   let response: Response;
   try {
     response = await fetch(`${HR_LAUNCHER_URL}/start`, {
       method: "POST",
+      mode: "cors",
+      credentials: "omit",
       signal: AbortSignal.timeout(90_000),
     });
   } catch {
@@ -177,7 +202,7 @@ export async function bootstrapHrTab(tab: Window | null): Promise<void> {
     );
   }
 
-  writeLoadingPage(tab, "Hikvision frontend va backend ishga tushirilmoqda...");
+  writeLoadingPage(tab, "Hikvision frontend va backend ishga tushirilmoqda…");
 
   try {
     const url = IS_DEV

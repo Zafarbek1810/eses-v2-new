@@ -1,5 +1,4 @@
 import express from "express";
-import cors from "cors";
 import net from "net";
 import path from "path";
 import { spawn } from "child_process";
@@ -197,16 +196,26 @@ async function ensureHrStackRunning() {
 
 const app = express();
 
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(null, false);
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-}));
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Access-Control-Request-Private-Network");
+  // Chrome: https://eses.uz → http://localhost uchun majburiy
+  res.setHeader("Access-Control-Allow-Private-Network", "true");
+}
+
+app.use((req, res, next) => {
+  applyCors(req, res);
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, launcher: true });
