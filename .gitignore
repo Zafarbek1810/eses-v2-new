@@ -17,6 +17,7 @@ dist-ssr/
 # Logs
 logs/
 *.log
+hr-launcher/hr-launcher.log
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

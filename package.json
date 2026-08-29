@@ -9,6 +9,8 @@
     "dev:hikvision-frontend": "pnpm --dir Hikvision dev",
     "dev:hikvision-backend": "pnpm --dir NodeJS_Hikvision start",
     "hr:launcher": "pnpm --dir hr-launcher start",
+    "hr:install:win": "hr-launcher\\install-windows.bat",
+    "hr:install:mac": "bash hr-launcher/install-mac.command",
     "build:hikvision": "pnpm --dir Hikvision build"
   },
   "dependencies": {
