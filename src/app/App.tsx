@@ -63,6 +63,12 @@ import {
 import sesLogo from "@/images/ses.jpg";
 import { DashboardParticles } from "@/components/DashboardParticles";
 import { bootstrapHrTab, openDeviceHrAppSync } from "@/lib/deviceApp";
+import { AppTour } from "@/components/AppTour";
+import {
+  buildTourSteps,
+  isTourCompleted,
+  markTourCompleted,
+} from "@/lib/tours";
 
 /** User-menu pages — available to every authenticated role. */
 const USER_PAGE_IDS = ["profile", "edit-profile", "settings"] as const;
@@ -318,10 +324,12 @@ type SidebarProps = {
   allowedNavIds: readonly string[];
   roleName?: string | null;
   hasWallpaper?: boolean;
+  forceGlobalDataOpen?: boolean;
 };
 
 const Sidebar = ({
   collapsed, onSidebarToggle, activeNav, onNavChange, primaryColor, allowedNavIds, roleName, hasWallpaper,
+  forceGlobalDataOpen,
 }: SidebarProps) => {
   const [lang, setLang] = useState("Lotin");
   const langs = [
@@ -386,6 +394,7 @@ const Sidebar = ({
           </div>
           <button
             type="button"
+            data-tour="sidebar-toggle"
             onClick={onSidebarToggle}
             title={collapsed ? "Sidebarni ochish" : "Sidebarni yopish"}
             className="p-2 rounded-xl border border-border hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground shrink-0"
@@ -409,6 +418,7 @@ const Sidebar = ({
               activeNav={activeNav}
               primaryColor={primaryColor}
               onNavChange={onNavChange}
+              forceOpen={item.id === "global-data" && forceGlobalDataOpen}
             />
           ) : (
             <SidebarItem key={item.id} item={item} collapsed={collapsed} active={activeNav === item.id} primaryColor={primaryColor} onNavChange={onNavChange} />
@@ -428,7 +438,7 @@ const Sidebar = ({
       <div className="relative z-[1] px-2.5 pb-3 pt-2 space-y-2">
         {!collapsed ? (
           <>
-            <div className="rounded-2xl border border-border bg-card/80 p-2.5">
+            <div className="rounded-2xl border border-border bg-card/80 p-2.5" data-tour="sidebar-language">
               <div className="flex gap-1">
                 {langs.map(l => (
                   <button
@@ -445,7 +455,7 @@ const Sidebar = ({
                 ))}
               </div>
             </div>
-            <div className="rounded-xl border border-border overflow-hidden">
+            <div className="rounded-xl border border-border overflow-hidden" data-tour="sidebar-support">
               <a
                 href="https://t.me/Ibadullayevich_Dilmurod"
                 target="_blank"
@@ -499,18 +509,23 @@ const Sidebar = ({
   );
 };
 
-const SidebarGroup = ({ item, collapsed, activeNav, primaryColor, onNavChange }: {
+const SidebarGroup = ({ item, collapsed, activeNav, primaryColor, onNavChange, forceOpen }: {
   item: NavItem; collapsed: boolean; activeNav: string;
   primaryColor: string; onNavChange: (id: string) => void;
+  forceOpen?: boolean;
 }) => {
   const children = item.children ?? [];
   const childActive = children.some(child => child.id === activeNav);
-  const [open, setOpen] = useState(childActive);
+  const [open, setOpen] = useState(childActive || Boolean(forceOpen));
   const groupRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (childActive && !collapsed) setOpen(true);
   }, [childActive, collapsed]);
+
+  useEffect(() => {
+    if (forceOpen && !collapsed) setOpen(true);
+  }, [forceOpen, collapsed]);
 
   useEffect(() => {
     if (!open || !collapsed) return;
@@ -530,6 +545,7 @@ const SidebarGroup = ({ item, collapsed, activeNav, primaryColor, onNavChange }:
     <div className="relative" ref={groupRef}>
       <button
         type="button"
+        data-tour={`nav-${item.id}`}
         onClick={() => setOpen(v => !v)}
         title={collapsed ? item.label : undefined}
         className={`relative w-full flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-[13px] font-medium transition-all ${
@@ -572,6 +588,7 @@ const SidebarGroup = ({ item, collapsed, activeNav, primaryColor, onNavChange }:
               <button
                 key={child.id}
                 type="button"
+                data-tour={`nav-${child.id}`}
                 onClick={() => onNavChange(child.id)}
                 className={`relative w-full flex items-center gap-2 px-2 py-1.5 rounded-xl text-[12px] font-medium transition-all ${
                   active
@@ -635,6 +652,7 @@ const SidebarItem = ({ item, collapsed, active, primaryColor, onNavChange }: {
   const Icon = item.icon;
   return (
     <button
+      data-tour={`nav-${item.id}`}
       onClick={() => onNavChange(item.id)}
       title={collapsed ? item.label : undefined}
       className={`relative w-full flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-[13px] font-medium transition-all ${
@@ -725,7 +743,7 @@ const Header = ({
     <div className={`sticky top-0 px-4 pt-3 pb-1 shrink-0 ${showNotif || showUserMenu ? "z-40" : "z-[2]"}`}>
       <header className={`h-[58px] flex items-center px-3 gap-3 rounded-2xl border border-border shadow-sm backdrop-blur-md ${wallpaperId ? "bg-card/70" : "bg-card/90"}`}>
         {/* Page title */}
-        <div className="flex-1 min-w-0 flex items-center gap-3">
+        <div className="flex-1 min-w-0 flex items-center gap-3" data-tour="header-title">
           <div
             className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
             style={{ background: `${primaryColor}18`, color: primaryColor }}
@@ -755,6 +773,7 @@ const Header = ({
         <div className="flex items-center gap-0.5 p-1 rounded-2xl border border-border bg-secondary/40">
           <div className="relative" ref={notifRef}>
             <button
+              data-tour="header-notifications"
               onClick={() => { setShowNotif(!showNotif); setShowUserMenu(false); }}
               className="relative p-2 rounded-xl hover:bg-card transition-colors text-muted-foreground hover:text-foreground"
             >
@@ -799,6 +818,7 @@ const Header = ({
           </div>
 
           <button
+            data-tour="header-theme"
             onClick={onDarkToggle}
             className="p-2 rounded-xl hover:bg-card transition-colors text-muted-foreground hover:text-foreground"
           >
@@ -806,6 +826,7 @@ const Header = ({
           </button>
 
           <button
+            data-tour="header-settings"
             onClick={onSettingsOpen}
             className="p-2 rounded-xl hover:bg-card transition-colors text-muted-foreground hover:text-foreground"
           >
@@ -816,6 +837,7 @@ const Header = ({
         {/* User chip */}
         <div className="relative" ref={menuRef}>
           <button
+            data-tour="header-user-menu"
             onClick={() => { setShowUserMenu(!showUserMenu); setShowNotif(false); }}
             className="flex items-center gap-2.5 pl-1 pr-2.5 py-1 rounded-2xl border border-border hover:bg-secondary/50 transition-colors"
           >
@@ -1139,8 +1161,44 @@ const Dashboard = ({
   const [editPatientId, setEditPatientId] = useState<number | null>(null);
   const [companiesRegionId, setCompaniesRegionId] = useState<number | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
+  const [showTour, setShowTour] = useState(false);
+  const [forceGlobalDataOpen, setForceGlobalDataOpen] = useState(false);
   const hrOpeningRef = useRef(false);
   const activeWallpaper = wallpaperSrc(wallpaperId);
+
+  const tourSteps = useMemo(() => buildTourSteps(roleName), [roleName]);
+
+  useEffect(() => {
+    if (!user?.id || tourSteps.length === 0) return;
+    if (isTourCompleted(user.id, roleName)) return;
+    const timer = window.setTimeout(() => setShowTour(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [user?.id, roleName, tourSteps.length]);
+
+  const completeTour = () => {
+    if (user?.id) markTourCompleted(user.id, roleName);
+    setShowTour(false);
+    setForceGlobalDataOpen(false);
+  };
+
+  const skipTour = () => {
+    setShowTour(false);
+    setForceGlobalDataOpen(false);
+  };
+
+  const handleTourStepPrepare = (stepIndex: number) => {
+    const step = tourSteps[stepIndex];
+    if (!step) return;
+    if (step.ensureSidebarOpen && collapsed) setCollapsed(false);
+    const target = step.target ?? "";
+    if (
+      target.includes("global-laboratories")
+      || target.includes("global-analyses")
+      || target.includes("global-templates")
+    ) {
+      setForceGlobalDataOpen(true);
+    }
+  };
 
   useEffect(() => {
     if (isUserPage(activeNav)) return;
@@ -1361,6 +1419,7 @@ const Dashboard = ({
         allowedNavIds={allowedNavIds}
         roleName={roleName}
         hasWallpaper={Boolean(activeWallpaper)}
+        forceGlobalDataOpen={forceGlobalDataOpen}
       />
       <div className={`relative z-10 flex flex-col flex-1 overflow-hidden min-w-0 ses-glass-ui${activeWallpaper ? " ses-glass-ui--photo" : ""}`}>
         <DashboardParticles primaryColor={primaryColor} />
@@ -1380,6 +1439,18 @@ const Dashboard = ({
           {renderPage()}
         </div>
       </div>
+      {showTour && tourSteps.length > 0 && (
+        <AppTour
+          steps={tourSteps}
+          primaryColor={primaryColor}
+          onComplete={completeTour}
+          onSkip={skipTour}
+          onEnsureSidebarOpen={() => {
+            if (collapsed) setCollapsed(false);
+          }}
+          onStepChange={handleTourStepPrepare}
+        />
+      )}
     </div>
   );
 };
