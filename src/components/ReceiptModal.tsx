@@ -145,8 +145,8 @@ async function printKassaReceipts(slips: ReceiptSlipData[]): Promise<void> {
 <head>
   <meta charset="utf-8" />
   <title>Chek</title>
-  <style>
-    @page { margin: 8mm; size: auto; }
+  <style id="page-size-style">
+    @page { margin: 4mm; size: 80mm 200mm; }
     html, body {
       margin: 0;
       padding: 0;
@@ -164,7 +164,7 @@ async function printKassaReceipts(slips: ReceiptSlipData[]): Promise<void> {
       break-after: auto;
     }
     .inner {
-      width: 320px;
+      width: 280px;
       margin: 0 auto;
     }
   </style>
@@ -180,6 +180,23 @@ async function printKassaReceipts(slips: ReceiptSlipData[]): Promise<void> {
 
   await waitForPrintImages(win.document);
   await new Promise<void>(r => window.setTimeout(() => r(), 120));
+
+  // Size each printed page to the actual content instead of trusting the
+  // printer's default paper size — this is what stops a long name from
+  // pushing content onto a second sheet.
+  const slipEls = Array.from(win.document.querySelectorAll<HTMLElement>(".slip"));
+  const tallestSlip = slipEls.reduce(
+    (max, el) => Math.max(max, el.getBoundingClientRect().height),
+    0,
+  );
+  const pageHeightMm = Math.ceil((tallestSlip / 96) * 25.4) + 8; // px -> mm + small buffer
+  const styleEl = win.document.getElementById("page-size-style");
+  if (styleEl) {
+    styleEl.textContent = styleEl.textContent!.replace(
+      /@page\s*{[^}]*}/,
+      `@page { margin: 4mm; size: 80mm ${pageHeightMm}mm; }`,
+    );
+  }
 
   try {
     win.focus();
