@@ -88,6 +88,10 @@ function receiptSlipHtml(slip: ReceiptSlipData): string {
       <p style="text-align:center;font-size:11px;margin:0 0 18px;color:#333">QR kodni skanerlab natija PDF ni oching</p>
       <div style="font-size:13px;line-height:1.45;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px">
+          <span>ID</span>
+          <span style="font-weight:600;text-align:right">${slip.analysisId}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px">
           <span>Bemor</span>
           <span style="font-weight:600;text-align:right">${escapeHtml(slip.patientName)}</span>
         </div>
@@ -100,7 +104,6 @@ function receiptSlipHtml(slip: ReceiptSlipData): string {
         <div style="display:flex;justify-content:space-between;gap:12px;font-size:13px">
           <div>
             <div style="font-weight:600">${escapeHtml(slip.analysisName)}</div>
-            <div style="font-size:11px;color:#666;margin-top:2px">ID: ${slip.analysisId}</div>
             ${lab}
           </div>
           <div style="white-space:nowrap;font-weight:600">${escapeHtml(slip.priceLabel)}</div>
