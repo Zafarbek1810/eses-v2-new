@@ -1,8 +1,5 @@
 packages:
   - '.'
-  - 'Hikvision'
-  - 'NodeJS_Hikvision'
-  - 'hr-launcher'
 supportedArchitectures:
   os:
     - linux

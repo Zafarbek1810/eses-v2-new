@@ -62,7 +62,7 @@ import {
 } from "@/lib/wallpapers";
 import sesLogo from "@/images/ses.jpg";
 import { DashboardParticles } from "@/components/DashboardParticles";
-import { bootstrapHrTab, openDeviceHrAppSync } from "@/lib/deviceApp";
+import { openHrApp } from "@/lib/deviceApp";
 import { AppTour } from "@/components/AppTour";
 import {
   buildTourSteps,
@@ -1163,7 +1163,6 @@ const Dashboard = ({
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);
   const [showTour, setShowTour] = useState(false);
   const [forceGlobalDataOpen, setForceGlobalDataOpen] = useState(false);
-  const hrOpeningRef = useRef(false);
   const activeWallpaper = wallpaperSrc(wallpaperId);
 
   const tourSteps = useMemo(() => buildTourSteps(roleName), [roleName]);
@@ -1217,19 +1216,7 @@ const Dashboard = ({
   const handleNavChange = (id: string) => {
     if (!canAccessNav(roleName, id)) return;
     if (id === "hr") {
-      if (hrOpeningRef.current) return;
-      hrOpeningRef.current = true;
-
-      const tab = openDeviceHrAppSync();
-
-      void bootstrapHrTab(tab)
-        .catch(error => {
-          const message = error instanceof Error ? error.message : "HR ochilmadi";
-          window.alert(message);
-        })
-        .finally(() => {
-          hrOpeningRef.current = false;
-        });
+      openHrApp();
       return;
     }
     setSelectedCompany(null);

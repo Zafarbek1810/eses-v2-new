@@ -1,8 +1,5 @@
 # Dependencies
 node_modules/
-Hikvision/node_modules/
-NodeJS_Hikvision/node_modules/
-hr-launcher/node_modules/
 
 # Build
 dist/
@@ -17,7 +14,6 @@ dist-ssr/
 # Logs
 logs/
 *.log
-hr-launcher/hr-launcher.log
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
