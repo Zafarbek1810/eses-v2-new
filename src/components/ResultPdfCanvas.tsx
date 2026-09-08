@@ -7,7 +7,6 @@ import {
   PDF_PAGE_GAP_PREVIEW,
   formatDynamicDisplay,
   getPagePreviewTop,
-  getPdfPageMarginPreview,
   getPdfPreviewHeight,
   getPdfPreviewWidth,
   getTemplatePageLayouts,
@@ -27,17 +26,21 @@ export const ResultPdfCanvas = React.forwardRef<
     dynamicCtx: PdfDynamicContext | null;
     onFillChange?: (key: string, value: string) => void;
     readOnly?: boolean;
-    /** Print/export: top+bottom page margin so table splits aren't flush to edges. */
+    /**
+     * Print/export layout: content is nested inside each `[data-pdf-page]`
+     * so html2canvas captures real content (edit layout leaves pages empty).
+     * Edge-to-edge — no extra top/bottom page margins.
+     */
     withMargins?: boolean;
   }
 >(function ResultPdfCanvas(
   { template, fillValues, dynamicCtx, onFillChange, readOnly = false, withMargins = false },
   ref,
 ) {
-  const layouts = getTemplatePageLayouts(template, withMargins);
-  const width = getPdfPreviewWidth(template, withMargins);
-  const height = getPdfPreviewHeight(template, withMargins);
-  const marginPx = withMargins ? getPdfPageMarginPreview() : 0;
+  // Same pagination as on-screen edit preview (full page height, no margin inset).
+  const layouts = getTemplatePageLayouts(template, false);
+  const width = getPdfPreviewWidth(template, false);
+  const height = getPdfPreviewHeight(template, false);
 
   const renderElements = (keyPrefix: string, page?: PdfPageLayout) =>
     template.elements.map(el => {
@@ -74,31 +77,21 @@ export const ResultPdfCanvas = React.forwardRef<
         {layouts.map(page => {
           const pageW = Math.round(page.width * A4_PREVIEW_SCALE);
           const pageH = Math.round(page.height * A4_PREVIEW_SCALE);
-          const usableH = Math.max(40, pageH - 2 * marginPx);
           const top = getPagePreviewTop(page, PDF_PAGE_GAP_PREVIEW);
           return (
             <div
               key={page.id}
               data-pdf-page=""
               data-orientation={page.orientation}
-              className="absolute left-0 bg-white shadow-md"
+              className="absolute left-0 overflow-hidden bg-white shadow-md"
               style={{
                 top,
                 width: pageW,
                 height: pageH,
               }}
             >
-              <div
-                className="absolute left-0 overflow-hidden"
-                style={{
-                  top: marginPx,
-                  width: pageW,
-                  height: usableH,
-                }}
-              >
-                <div className="absolute left-0 top-0" style={{ width: pageW }}>
-                  {renderElements(`p${page.index}`, page)}
-                </div>
+              <div className="absolute left-0 top-0" style={{ width: pageW }}>
+                {renderElements(`p${page.index}`, page)}
               </div>
             </div>
           );

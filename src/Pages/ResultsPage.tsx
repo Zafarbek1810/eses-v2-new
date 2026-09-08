@@ -197,7 +197,7 @@ function buildDynamicContext(
   const user = getStoredUser();
   const shortName = user
     ? `${(user.username || "").charAt(0).toUpperCase()}.${user.surname || ""}`.replace(/^\./, "").replace(/\.$/, "") ||
-      null
+    null
     : null;
   const role = normalizeRoleName(user?.role?.name);
   const isAssistant = role === "lab_asistant";
@@ -582,14 +582,14 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         cartItems.length > 0
           ? cartItems
           : [
-              {
-                key: row.key,
-                analysis_id: row.analysisId,
-                analysis_name: row.analysisName,
-                laboratory_name: row.laboratoryName,
-                price: 0,
-              },
-            ];
+            {
+              key: row.key,
+              analysis_id: row.analysisId,
+              analysis_name: row.analysisName,
+              laboratory_name: row.laboratoryName,
+              price: 0,
+            },
+          ];
 
       const totalBeforeDiscount =
         parseMoney(order.total_amount) || items.reduce((sum, i) => sum + i.price, 0);
@@ -603,15 +603,15 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
 
       const patient: ReceiptPatient = order.patient
         ? {
-            first_name: order.patient.first_name,
-            last_name: order.patient.last_name,
-            phone: order.patient.phone ?? null,
-          }
+          first_name: order.patient.first_name,
+          last_name: order.patient.last_name,
+          phone: order.patient.phone ?? null,
+        }
         : {
-            first_name: row.patientName,
-            last_name: "",
-            phone: null,
-          };
+          first_name: row.patientName,
+          last_name: "",
+          phone: null,
+        };
 
       setReceiptView({
         patient,
@@ -679,8 +679,8 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
 
       const otherItems = existing
         ? getResultItems(existing).filter(
-            ri => resolveResultItemAnalysisId(ri) !== selected.analysisId,
-          )
+          ri => resolveResultItemAnalysisId(ri) !== selected.analysisId,
+        )
         : [];
 
       const payload = {
@@ -716,10 +716,10 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         list.map(r =>
           r.orderId === selected.orderId
             ? {
-                ...r,
-                resultId: savedId,
-                hasSavedValues: r.analysisId === selected.analysisId ? true : r.hasSavedValues,
-              }
+              ...r,
+              resultId: savedId,
+              hasSavedValues: r.analysisId === selected.analysisId ? true : r.hasSavedValues,
+            }
             : r,
         ),
       );
@@ -806,10 +806,10 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     const grid = normalizeTableData(tableEl?.tableData);
     const pdfReadOnly = exporting || !canEditResults;
     const previewPageHeight = template
-      ? getPdfPreviewHeight(template, pdfReadOnly)
+      ? getPdfPreviewHeight(template)
       : A4_PREVIEW_HEIGHT;
     const previewPageWidth = template
-      ? getPdfPreviewWidth(template, pdfReadOnly)
+      ? getPdfPreviewWidth(template)
       : A4_PREVIEW_WIDTH;
 
     return (
@@ -832,7 +832,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               {selected.resultId ? ` · Result #${selected.resultId}` : ""}
             </p>
           </div>
-          {canEditResults && (
+          { /* {canEditResults && (
             <label className="flex items-center gap-2 min-w-[200px] max-w-xs">
               <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
                 Shablon
@@ -854,7 +854,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                 )}
               </select>
             </label>
-          )}
+          )} */}
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-muted-foreground">
             {canEditResults ? (
               <>
@@ -1221,9 +1221,8 @@ function ToastStack({
       {toasts.map(t => (
         <div
           key={t.id}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg text-[12px] font-medium text-white ${
-            t.type === "success" ? "bg-emerald-600" : "bg-red-600"
-          }`}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg text-[12px] font-medium text-white ${t.type === "success" ? "bg-emerald-600" : "bg-red-600"
+            }`}
         >
           {t.type === "success" ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
           {t.text}

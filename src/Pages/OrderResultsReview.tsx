@@ -406,10 +406,10 @@ export function OrderResultsReview({
   const hasTable = Boolean(active?.template?.elements.some(el => el.type === "table"));
   const canPrint = Boolean(active?.template && hasTable && !loading && !error);
   const previewPageHeight = active?.template
-    ? getPdfPreviewHeight(active.template, true)
+    ? getPdfPreviewHeight(active.template)
     : A4_PREVIEW_HEIGHT;
   const previewPageWidth = active?.template
-    ? getPdfPreviewWidth(active.template, true)
+    ? getPdfPreviewWidth(active.template)
     : A4_PREVIEW_WIDTH;
 
   return (
