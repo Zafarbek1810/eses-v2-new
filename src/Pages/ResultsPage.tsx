@@ -806,10 +806,10 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     const grid = normalizeTableData(tableEl?.tableData);
     const pdfReadOnly = exporting || !canEditResults;
     const previewPageHeight = template
-      ? getPdfPreviewHeight(template)
+      ? getPdfPreviewHeight(template, pdfReadOnly)
       : A4_PREVIEW_HEIGHT;
     const previewPageWidth = template
-      ? getPdfPreviewWidth(template)
+      ? getPdfPreviewWidth(template, pdfReadOnly)
       : A4_PREVIEW_WIDTH;
 
     return (
@@ -1004,6 +1004,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                     dynamicCtx={dynamicCtx}
                     onFillChange={canEditResults ? updateFill : undefined}
                     readOnly={pdfReadOnly}
+                    withMargins={pdfReadOnly}
                   />
                 </div>
               </div>
