@@ -1207,9 +1207,9 @@ export function OrderPage({
             <table className="w-full min-w-[1000px] text-left">
               <thead>
                 <tr className="border-b border-border bg-secondary/40">
-                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {/* <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     ID
-                  </th>
+                  </th> */}
                   <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Bemor
                   </th>
@@ -1270,9 +1270,9 @@ export function OrderPage({
                       className="border-b border-border hover:bg-secondary/30 transition-colors group cursor-pointer"
                       onClick={() => onPatientChange(p.id)}
                     >
-                      <td className="px-4 py-3 text-[13px] font-mono text-muted-foreground">
+                      {/* <td className="px-4 py-3 text-[13px] font-mono text-muted-foreground">
                         #{p.id}
-                      </td>
+                      </td> */}
                       <td className="px-4 py-3">
                         <p className="text-[13px] font-semibold text-foreground">
                           {p.last_name} {p.first_name}
