@@ -1181,6 +1181,7 @@ const Dashboard = ({
   };
 
   const skipTour = () => {
+    if (user?.id) markTourCompleted(user.id, roleName);
     setShowTour(false);
     setForceGlobalDataOpen(false);
   };

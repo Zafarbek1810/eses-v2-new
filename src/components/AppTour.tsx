@@ -37,6 +37,7 @@ export function AppTour({
   const [stepIndex, setStepIndex] = useState(0);
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({});
+  const [confirmSkipOpen, setConfirmSkipOpen] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const step = steps[stepIndex];
@@ -110,7 +111,12 @@ export function AppTour({
     setStepIndex(i => i + 1);
   };
 
-  const handleSkip = () => {
+  const handleSkipRequest = () => {
+    setConfirmSkipOpen(true);
+  };
+
+  const handleConfirmSkip = () => {
+    setConfirmSkipOpen(false);
     onSkip();
   };
 
@@ -143,7 +149,7 @@ export function AppTour({
 
       <div
         ref={tooltipRef}
-        className="z-[10000] rounded-2xl border border-border bg-card shadow-2xl p-5 pointer-events-auto"
+        className={`z-[10000] rounded-2xl border border-border bg-card shadow-2xl p-5 pointer-events-auto ${confirmSkipOpen ? "invisible" : ""}`}
         style={tooltipStyle}
       >
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -162,7 +168,7 @@ export function AppTour({
           </div>
           <button
             type="button"
-            onClick={handleSkip}
+            onClick={handleSkipRequest}
             className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors shrink-0"
             aria-label="Yo'riqnomani to'xtatish"
           >
@@ -175,7 +181,7 @@ export function AppTour({
         <div className="flex items-center justify-between gap-3">
           <button
             type="button"
-            onClick={handleSkip}
+            onClick={handleSkipRequest}
             className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5"
           >
             To&apos;xtatish
@@ -190,6 +196,43 @@ export function AppTour({
           </button>
         </div>
       </div>
+
+      {confirmSkipOpen && (
+        <div
+          className="fixed inset-0 z-[10001] flex items-center justify-center p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="tour-skip-title"
+          aria-describedby="tour-skip-desc"
+        >
+          <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmSkipOpen(false)} />
+          <div className="relative w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-2xl text-center">
+            <h3 id="tour-skip-title" className="text-base font-bold text-foreground mb-2">
+              Yo&apos;riqnomani to&apos;xtatish?
+            </h3>
+            <p id="tour-skip-desc" className="text-sm text-muted-foreground leading-relaxed mb-6">
+              Tasdiqlasangiz, bu yo&apos;riqnoma ushbu profil egasi uchun qayta ko&apos;rsatilmaydi.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmSkipOpen(false)}
+                className="flex-1 rounded-xl border border-border py-2.5 text-sm font-medium text-foreground hover:bg-secondary transition-colors"
+              >
+                Bekor qilish
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSkip}
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
+                style={{ background: primaryColor }}
+              >
+                Ha, to&apos;xtatish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
