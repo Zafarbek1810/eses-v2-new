@@ -4,13 +4,14 @@ import { flushSync } from "react-dom";
 import {
   Search, RefreshCw, FileBarChart2, X, Loader2, CheckCircle, AlertCircle,
   ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut, Printer, Eye, QrCode,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, User, Building2,
 } from "lucide-react";
 import {
   getOrdersFull,
   getAllOrders,
   getOrderById,
   resolveOrderItemAnalysisId,
+  resolveOrderType,
   type Order,
   type OrderItem,
   type OrderPatient,
@@ -22,7 +23,10 @@ import {
   findResultByOrderId,
   getAllResults,
   getResultById,
+  getResultByIdTwo,
   getResultItems,
+  GRID_TEMPLATE_ID_KEY,
+  GRID_OVERLAYS_KEY,
   resolveResultItemAnalysisId,
   updateResult,
   type ResultRecord,
@@ -51,17 +55,17 @@ import { downloadElementAsPdf, printElementAsPdf } from "@/lib/pdfExport";
 import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
-  bodyCellKey,
   fetchPdfTemplatesFromApi,
   getPdfPreviewHeight,
   getPdfPreviewWidth,
-  headerCellKey,
   hydratePdfTemplateImages,
   hydratePdfTemplatesImages,
-  isDynamicCell,
+  listPdfTemplatesForAnalysis,
   loadPdfTemplates,
   normalizeTableData,
+  resolvePdfTemplateAnalysisId,
   resolveStoredCompanyDynamic,
+  seedDynamicFillFromTemplate,
   type PdfDynamicContext,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
@@ -69,6 +73,19 @@ import {
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
 
 const PER_PAGE = 10;
+
+type ResultsOrderTab = "patient" | "sample";
+
+const RESULTS_ORDER_TABS: { id: ResultsOrderTab; label: string; icon: typeof User }[] = [
+  { id: "patient", label: "Bemor uchun", icon: User },
+  { id: "sample", label: "Tashkilot uchun", icon: Building2 },
+];
+
+function matchesResultsOrderTab(orderType: string, tab: ResultsOrderTab) {
+  const t = orderType.trim().toLowerCase();
+  const isSample = t === "sample" || t === "organization" || t === "org" || t === "tashkilot";
+  return tab === "sample" ? isSample : !isSample;
+}
 
 type ReceiptView = {
   patient: ReceiptPatient;
@@ -106,6 +123,7 @@ type OrderAnalysisRow = {
   laboratoryId: number | null;
   itemStatus: string;
   patientName: string;
+  orderType: string;
   orderCreatedAt?: string;
   resultId: number | null;
   hasSavedValues: boolean;
@@ -164,6 +182,7 @@ function flattenOrderAnalyses(
         laboratoryId: item.laboratory?.id ?? null,
         itemStatus: String(item.status || "pending"),
         patientName: patientNameFromOrder(order.patient, order.name),
+        orderType: resolveOrderType(order),
         orderCreatedAt: item.createdAt || order.createdAt,
         resultId: existing?.id ?? null,
         hasSavedValues: savedForAnalysis,
@@ -241,61 +260,104 @@ function bindTemplateToAnalysis(
   return cloned;
 }
 
-function resolveTemplateForAnalysis(
-  analysisId: number,
-  analysisName: string,
-  list: PdfTemplate[],
-): PdfTemplate | null {
-  // Faqat berilgan ro'yxat (API). localStorage cache katta rasmlarni olib tashlaydi.
-  const base =
-    list.find(t => t.analysisId === analysisId) ||
-    list.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
-    list.find(t => t.elements.some(el => el.type === "table")) ||
-    list[0] ||
-    null;
-
-  if (!base) return null;
-  return bindTemplateToAnalysis(base, analysisId, analysisName);
+function templateMatchesId(template: PdfTemplate, preferredId?: string | null) {
+  if (!preferredId) return false;
+  const raw = String(preferredId).trim();
+  if (!raw) return false;
+  if (template.id === raw) return true;
+  const storageId = String(template.storageId ?? "");
+  if (storageId && (storageId === raw || template.id === `storage-${raw}` || raw === `storage-${storageId}`)) {
+    return true;
+  }
+  return false;
 }
 
-/** Seed fill map from dynamic cells only; saved values win when present */
+function analysisIdsFromLab(lab: { analysis?: unknown[] } | null | undefined): number[] {
+  const ids: number[] = [];
+  for (const raw of lab?.analysis ?? []) {
+    const id = Number(
+      raw && typeof raw === "object" && "id" in raw ? (raw as { id?: unknown }).id : NaN,
+    );
+    if (Number.isFinite(id) && id > 0) ids.push(id);
+  }
+  return ids;
+}
+
+/** Shu analiz (va shu laboratoriya) ga tegishli PDF shablonlar. Boshqa analiz shabloniga tushmaydi. */
+async function templatesForAnalysisRow(
+  row: OrderAnalysisRow,
+  all: PdfTemplate[],
+): Promise<PdfTemplate[]> {
+  const exact = listPdfTemplatesForAnalysis(row.analysisId, all);
+  if (exact.length > 0) return exact;
+
+  const name = row.analysisName.trim().toLowerCase();
+  let pool = all;
+  if (row.laboratoryId != null) {
+    try {
+      const labs = await getAllLaboratories();
+      const lab = (Array.isArray(labs) ? labs : []).find(item => item.id === row.laboratoryId);
+      const ids = new Set(analysisIdsFromLab(lab));
+      if (ids.size > 0) {
+        pool = all.filter(template => {
+          const id = resolvePdfTemplateAnalysisId(template);
+          return id != null && ids.has(id);
+        });
+      }
+    } catch {
+      /* laboratoriya ro'yxati kelmasa nom bo'yicha qidiramiz */
+    }
+  }
+
+  if (!name) return [];
+  return pool.filter(template => (template.analysisName || "").trim().toLowerCase() === name);
+}
+
+function pickTemplateForAnalysis(
+  list: PdfTemplate[],
+  preferredId?: string | null,
+): PdfTemplate | null {
+  const preferred = preferredId ? list.find(template => templateMatchesId(template, preferredId)) : null;
+  if (preferred) return preferred;
+  if (list.length === 1) return list[0];
+  return null;
+}
+
 function seedFillFromTemplate(
   tpl: PdfTemplate | null,
   saved: Record<string, string> = {},
 ): Record<string, string> {
-  const table = tpl?.elements.find(el => el.type === "table");
-  const grid = normalizeTableData(table?.tableData);
-  const next: Record<string, string> = {};
+  const next = seedDynamicFillFromTemplate(tpl, saved);
+  const tplId = saved[GRID_TEMPLATE_ID_KEY];
+  if (tplId) next[GRID_TEMPLATE_ID_KEY] = tplId;
+  const overlays = saved[GRID_OVERLAYS_KEY];
+  if (overlays) next[GRID_OVERLAYS_KEY] = overlays;
+  return next;
+}
 
-  for (let r = 0; r < grid.headerRows; r++) {
-    for (let c = 0; c < grid.cols; c++) {
-      const cell = grid.headerCells[r][c];
-      if (cell.covered || !isDynamicCell(cell)) continue;
-      const key = headerCellKey(r, c);
-      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
-        ? String(saved[key] ?? "")
-        : "";
-    }
-  }
-
-  for (let r = 0; r < grid.bodyRows; r++) {
-    for (let c = 0; c < grid.cols; c++) {
-      const cell = grid.bodyCells[r][c];
-      if (cell.covered || !isDynamicCell(cell)) continue;
-      const key = bodyCellKey(r, c);
-      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
-        ? String(saved[key] ?? "")
-        : "";
-    }
-  }
+/** Yozuvlar faqat saqlangan shablonga tegishli. Boshqa PDF ga ko'chmaydi. */
+function fillsForTemplate(
+  tpl: PdfTemplate,
+  saved: Record<string, string>,
+  templateCount: number,
+): Record<string, string> {
+  const savedId = saved[GRID_TEMPLATE_ID_KEY];
+  const belongsHere = savedId
+    ? templateMatchesId(tpl, savedId)
+    : templateCount <= 1;
+  if (!belongsHere) return { [GRID_TEMPLATE_ID_KEY]: tpl.id };
+  const next = seedFillFromTemplate(tpl, saved);
+  next[GRID_TEMPLATE_ID_KEY] = tpl.id;
   return next;
 }
 
 export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const role = normalizeRoleName(getStoredUser()?.role?.name);
   const isKassir = role === "kassir";
+  const isKassirSangig = role === "kassir_sangig";
   const canEditResults = !isKassir;
   const restrictToOwnLab = role === "lab_director" || role === "lab_asistant";
+  const showOrderTypeTabs = isKassir;
 
   const [rows, setRows] = useState<OrderAnalysisRow[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -303,6 +365,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [loading, setLoading] = useState(true);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [orderTypeTab, setOrderTypeTab] = useState<ResultsOrderTab>("patient");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
@@ -321,6 +384,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [opening, setOpening] = useState(false);
   const [pdfZoom, setPdfZoom] = useState(PDF_ZOOM_DEFAULT);
   const pdfRef = useRef<HTMLDivElement>(null);
+  const savedFillRef = useRef<Record<string, string>>({});
   const labScopeRef = useRef<LabScope | null>(null);
   const [labScopeReady, setLabScopeReady] = useState(!restrictToOwnLab);
 
@@ -387,13 +451,29 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       const results = await getAllResults().catch(() => [] as ResultRecord[]);
 
       // Backend /order/getfull/labid?lab_id=... 500 — lab filtri clientda
-      if (scope) {
+      // Kassir / SAN GIG: order_type tablari uchun to'liq ro'yxat kerak
+      if (scope || isKassir || isKassirSangig) {
         const all = await getAllOrders().catch(async () => {
           const res = await getOrdersFull({ page: 1, limit: 500, search: s.trim() || undefined });
           return res.data;
         });
         let list = Array.isArray(all) ? all : [];
-        let nextRows = filterRowsByLabScope(flattenOrderAnalyses(list, results), scope);
+        const missingItems = list.length > 0 && list.every(o => !(o.items && o.items.length));
+        if (missingItems) {
+          try {
+            const res = await getOrdersFull({ page: 1, limit: 500, search: s.trim() || undefined });
+            if (Array.isArray(res.data) && res.data.length > 0) list = res.data;
+          } catch {
+            /* getall itemsiz qolsa ham davom etamiz */
+          }
+        }
+        let nextRows = flattenOrderAnalyses(list, results);
+        if (scope) nextRows = filterRowsByLabScope(nextRows, scope);
+        if (isKassirSangig) {
+          nextRows = nextRows.filter(r => matchesResultsOrderTab(r.orderType, "sample"));
+        } else if (isKassir) {
+          nextRows = nextRows.filter(r => matchesResultsOrderTab(r.orderType, orderTypeTab));
+        }
 
         const q = s.trim().toLowerCase();
         if (q) {
@@ -449,7 +529,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     if (!labScopeReady) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search, labScopeReady]);
+  }, [page, search, labScopeReady, orderTypeTab]);
 
   const applySearch = () => {
     setPage(1);
@@ -469,13 +549,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       const allTemplates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(
         async () => hydratePdfTemplatesImages(loadPdfTemplates()),
       );
-      setAvailableTemplates(allTemplates);
-      let tpl = resolveTemplateForAnalysis(row.analysisId, row.analysisName, allTemplates);
-      if (tpl) {
-        const hydrated = await hydratePdfTemplateImages(tpl);
-        tpl = bindTemplateToAnalysis(hydrated, row.analysisId, row.analysisName);
-      }
-      setTemplate(tpl);
+      let analysisTemplates = await templatesForAnalysisRow(row, allTemplates);
 
       let order: Order | null = null;
       try {
@@ -503,7 +577,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         savedItems = resultRec ? getResultItems(resultRec) : [];
       }
 
-      // getby sometimes omits nested items — fall back to cache for fills
+      // getby sometimes omits nested items — fall back to cache, then public order lookup
       if (savedItems.length === 0 && cachedRec) {
         const cachedItems = getResultItems(cachedRec);
         if (cachedItems.length > 0) {
@@ -511,14 +585,50 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           if (!resultRec) resultRec = cachedRec;
         }
       }
+      if (savedItems.length === 0) {
+        try {
+          const byOrder = await getResultByIdTwo(row.orderId);
+          const byOrderItems = getResultItems(byOrder);
+          if (byOrderItems.length > 0) {
+            savedItems = byOrderItems;
+            resultRec = byOrder;
+          }
+        } catch {
+          /* yozuvlar boshqa joyda bo'lmasa bo'sh qoladi */
+        }
+      }
+
+      const saved = decodeGridFillFromItems(savedItems, row.analysisId);
+      savedFillRef.current = saved;
+      const savedTemplateId = saved[GRID_TEMPLATE_ID_KEY];
+      const savedFromAll = savedTemplateId
+        ? allTemplates.find(template => templateMatchesId(template, savedTemplateId))
+        : null;
+      if (savedFromAll && !analysisTemplates.some(template => template.id === savedFromAll.id)) {
+        analysisTemplates = [savedFromAll, ...analysisTemplates];
+      }
+      setAvailableTemplates(analysisTemplates);
+
+      const picked = pickTemplateForAnalysis(analysisTemplates, savedTemplateId);
+      let tpl = picked
+        ? bindTemplateToAnalysis(picked, row.analysisId, row.analysisName)
+        : null;
+      if (tpl) {
+        try {
+          const hydrated = await hydratePdfTemplateImages(tpl);
+          tpl = bindTemplateToAnalysis(hydrated, row.analysisId, row.analysisName);
+        } catch {
+          /* rasm yuklanmasa ham shablon va yozuvlar ochilsin */
+        }
+      }
+      setTemplate(tpl);
 
       setDynamicCtx(buildDynamicContext(row, order, resultRec, company));
-      const saved = decodeGridFillFromItems(savedItems, row.analysisId);
-      setFillValues(seedFillFromTemplate(tpl, saved));
+      setFillValues(tpl ? fillsForTemplate(tpl, saved, analysisTemplates.length) : {});
 
-      if (!tpl?.elements.some(el => el.type === "table")) {
+      if (analysisTemplates.length === 0) {
         pushToast(
-          "PDF jadval shabloni topilmadi. Boshqaruv → PDF shablonida yarating.",
+          "Bu analiz uchun PDF shablon topilmadi. Boshqaruv → PDF shablonida yarating.",
           "error",
         );
       }
@@ -533,6 +643,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setAvailableTemplates([]);
     setFillValues({});
     setDynamicCtx(null);
+    savedFillRef.current = {};
     setPdfZoom(PDF_ZOOM_DEFAULT);
   };
 
@@ -637,12 +748,13 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const zoomReset = () => setPdfZoom(PDF_ZOOM_DEFAULT);
 
   const handleTemplateChange = (templateId: string) => {
-    if (!selected) return;
+    if (!selected || !canEditResults) return;
     const base = availableTemplates.find(t => t.id === templateId);
     if (!base) return;
     const next = bindTemplateToAnalysis(base, selected.analysisId, selected.analysisName);
     setTemplate(next);
-    setFillValues(prev => seedFillFromTemplate(next, prev));
+    setPdfZoom(PDF_ZOOM_DEFAULT);
+    setFillValues(fillsForTemplate(next, savedFillRef.current, availableTemplates.length));
   };
 
   const updateFill = (key: string, value: string) => {
@@ -740,7 +852,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   };
 
   const handleDownloadPdf = async () => {
-    if (!selected || !template || !hasTableReady()) return;
+    if (!selected || !template) return;
     if (!canEditResults) return;
 
     setDownloading(true);
@@ -772,7 +884,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   };
 
   const handlePrintPdf = async () => {
-    if (!selected || !template || !hasTableReady() || printing) return;
+    if (!selected || !template || printing) return;
 
     setPrinting(true);
     try {
@@ -798,13 +910,15 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     }
   };
 
-  const hasTableReady = () => Boolean(template?.elements.some(el => el.type === "table"));
-
   if (selected) {
     const hasTable = Boolean(template?.elements.some(el => el.type === "table"));
     const tableEl = template?.elements.find(el => el.type === "table");
-    const grid = normalizeTableData(tableEl?.tableData);
+    const grid = hasTable ? normalizeTableData(tableEl?.tableData) : null;
     const pdfReadOnly = exporting || !canEditResults;
+    const useOverlayEdit =
+      canEditResults &&
+      !exporting &&
+      (isKassirSangig || selected.orderType === "sample");
     const previewPageHeight = template
       ? getPdfPreviewHeight(template)
       : A4_PREVIEW_HEIGHT;
@@ -832,33 +946,11 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               {selected.resultId ? ` · Result #${selected.resultId}` : ""}
             </p>
           </div>
-          { /* {canEditResults && (
-            <label className="flex items-center gap-2 min-w-[200px] max-w-xs">
-              <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
-                Shablon
-              </span>
-              <select
-                value={template?.id ?? ""}
-                disabled={opening || availableTemplates.length === 0}
-                onChange={e => handleTemplateChange(e.target.value)}
-                className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-[12px] font-medium text-foreground focus:outline-none focus:border-[var(--primary)] disabled:opacity-50"
-              >
-                {availableTemplates.length === 0 ? (
-                  <option value="">Shablon yo&apos;q</option>
-                ) : (
-                  availableTemplates.map(t => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-          )} */}
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-muted-foreground">
             {canEditResults ? (
               <>
-                <Lock className="w-3 h-3" /> Faqat jadval inputlari
+                <Lock className="w-3 h-3" />
+                {useOverlayEdit ? "Jadval kataklari va PDF ustiga yozuv" : "Faqat jadval inputlari"}
               </>
             ) : (
               <>
@@ -870,7 +962,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
             <>
               <button
                 type="button"
-                disabled={saving || downloading || printing || !hasTable}
+                disabled={saving || downloading || printing || !template}
                 onClick={() => void handleSaveValues()}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
                 style={{ background: primaryColor }}
@@ -884,7 +976,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               </button>
               <button
                 type="button"
-                disabled={saving || downloading || printing || !hasTable || opening}
+                disabled={saving || downloading || printing || !template || opening}
                 onClick={() => void handleDownloadPdf()}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-secondary text-[12px] font-semibold text-foreground border border-border hover:opacity-90 disabled:opacity-50"
               >
@@ -899,7 +991,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           )}
           <button
             type="button"
-            disabled={printing || !hasTable || opening || saving || downloading}
+            disabled={printing || !template || opening || saving || downloading}
             onClick={() => void handlePrintPdf()}
             className={
               canEditResults
@@ -921,20 +1013,53 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           <div className="flex items-center justify-center py-16 text-muted-foreground gap-2 text-[13px]">
             <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
           </div>
+        ) : availableTemplates.length > 0 && canEditResults ? (
+          <div className="bg-card rounded-2xl border border-border shadow-sm p-4 space-y-3">
+            <div>
+              <h3 className="text-[13px] font-semibold text-foreground">PDF shablonlar</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {selected.laboratoryName !== "—" ? `${selected.laboratoryName} · ` : ""}
+                {selected.analysisName} — kerakli shablonni tanlang, keyin ichiga ma&apos;lumot kiriting.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {availableTemplates.map(item => {
+                const active = template?.id === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleTemplateChange(item.id)}
+                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-[12px] font-semibold border transition-colors ${
+                      active
+                        ? "text-white border-transparent"
+                        : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    }`}
+                    style={active ? { background: primaryColor } : undefined}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    {item.name || "Shablon"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {opening ? null : !template && availableTemplates.length > 0 ? (
+          <div className="bg-card rounded-2xl border border-border p-8 text-center">
+            <FileText className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+            <p className="text-[13px] font-medium text-foreground">Shablonni tanlang</p>
+            <p className="text-[12px] text-muted-foreground mt-1">
+              Yuqoridagi ro&apos;yxatdan shu analizning PDF shablonini bosing, keyin kataklarga ma&apos;lumot kiriting
+            </p>
+          </div>
         ) : !template ? (
           <div className="bg-card rounded-2xl border border-border p-8 text-center">
             <FileText className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
             <p className="text-[13px] font-medium text-foreground">PDF shablon topilmadi</p>
             <p className="text-[12px] text-muted-foreground mt-1">
-              Avval Boshqaruv → PDF shablon bo&apos;limida shablon yarating va saqlang
-            </p>
-          </div>
-        ) : !hasTable ? (
-          <div className="bg-card rounded-2xl border border-border p-8 text-center">
-            <FileText className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-            <p className="text-[13px] font-medium text-foreground">Shablonda jadval yo&apos;q</p>
-            <p className="text-[12px] text-muted-foreground mt-1">
-              PDF shablonga Jadval instrumentini qo&apos;shing va o&apos;zingiz chizing
+              Bu laboratoriya analizi uchun Boshqaruv → PDF shablon bo&apos;limida shablon yarating va saqlang
             </p>
           </div>
         ) : (
@@ -943,7 +1068,11 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               <div>
                 <h3 className="text-[13px] font-semibold text-foreground">{template.name}</h3>
                 <p className="text-[11px] text-muted-foreground">
-                  Header {grid.headerRows} · Body {grid.bodyRows} · {grid.cols} ustun
+                  {grid
+                    ? `Header ${grid.headerRows} · Body ${grid.bodyRows} · ${grid.cols} ustun${useOverlayEdit ? " · yozuvni sudrab joylang" : ""}`
+                    : useOverlayEdit
+                      ? "Saqlangan yozuvni sudrab joyini o'zgartirish mumkin"
+                      : "PDF shablon"}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1004,6 +1133,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                     dynamicCtx={dynamicCtx}
                     onFillChange={canEditResults ? updateFill : undefined}
                     readOnly={pdfReadOnly}
+                    overlayEdit={useOverlayEdit}
                     withMargins={pdfReadOnly}
                   />
                 </div>
@@ -1031,7 +1161,11 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                 applySearch();
               }
             }}
-            placeholder="Qidirish: bemor, analiz, buyurtma..."
+            placeholder={
+              isKassirSangig || (isKassir && orderTypeTab === "sample")
+                ? "Qidirish: tashkilot, analiz, buyurtma..."
+                : "Qidirish: bemor, analiz, buyurtma..."
+            }
             className="w-full bg-secondary border border-border rounded-xl pl-9 pr-3 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]"
           />
         </div>
@@ -1056,16 +1190,46 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       </div>
 
       <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-border flex items-center gap-2">
+        <div className="px-5 py-4 border-b border-border flex flex-wrap items-center gap-3">
           <FileBarChart2 className="w-4 h-4" style={{ color: primaryColor }} />
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-[14px] font-semibold text-foreground">Natijalar</h2>
             <p className="text-[11px] text-muted-foreground">
-              {isKassir
-                ? "Buyurtmadagi analizlar — PDF natijani ko'rish va chop etish"
+              {isKassirSangig
+                ? "Tashkilot (sample) buyurtmalari — PDF natija"
+                : isKassir
+                ? orderTypeTab === "sample"
+                  ? "Tashkilot buyurtmalari — PDF natijani ko'rish va chop etish"
+                  : "Bemor buyurtmalari — PDF natijani ko'rish va chop etish"
                 : "Buyurtmadagi analizlar — PDF shablon orqali natija kiritish"}
             </p>
           </div>
+          {showOrderTypeTabs && (
+            <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-secondary/70 border border-border">
+              {RESULTS_ORDER_TABS.map(tab => {
+                const active = orderTypeTab === tab.id;
+                const Icon = tab.icon;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => {
+                      if (tab.id === orderTypeTab) return;
+                      setPage(1);
+                      setOrderTypeTab(tab.id);
+                    }}
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors ${
+                      active ? "text-white" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    style={active ? { background: primaryColor } : undefined}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -1074,7 +1238,13 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           </div>
         ) : rows.length === 0 ? (
           <div className="py-16 text-center text-[13px] text-muted-foreground">
-            Buyurtmalarda analiz topilmadi
+            {isKassirSangig
+              ? "Tashkilot buyurtmalarida analiz topilmadi"
+              : isKassir
+              ? orderTypeTab === "sample"
+                ? "Tashkilot buyurtmalarida analiz topilmadi"
+                : "Bemor buyurtmalarida analiz topilmadi"
+              : "Buyurtmalarda analiz topilmadi"}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -1082,7 +1252,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               <thead>
                 <tr className="border-b border-border bg-secondary/50">
                   <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Buyurtma</th>
-                  <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Bemor</th>
+                  <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    {isKassirSangig || (isKassir && orderTypeTab === "sample") ? "Tashkilot" : "Bemor"}
+                  </th>
                   <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Analiz</th>
                   <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Laboratoriya</th>
                   <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Holat</th>

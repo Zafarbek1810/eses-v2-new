@@ -66,6 +66,7 @@ function escapeHtml(value: string): string {
 
 type ReceiptSlipData = {
   patientName: string;
+  nameLabel: string;
   phone: string;
   analysisId: number;
   analysisName: string;
@@ -92,7 +93,7 @@ function receiptSlipHtml(slip: ReceiptSlipData): string {
           <span style="font-weight:600;text-align:right">${slip.analysisId}</span>
         </div>
         <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px">
-          <span>Bemor</span>
+          <span>${escapeHtml(slip.nameLabel)}</span>
           <span style="font-weight:600;text-align:right">${escapeHtml(slip.patientName)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;gap:12px">
@@ -264,6 +265,7 @@ export function buildReceiptQrLinks(
 export function ReceiptModal({
   primaryColor,
   patient,
+  nameLabel = "Bemor",
   items,
   paymentMethod,
   paidAmount,
@@ -275,6 +277,7 @@ export function ReceiptModal({
 }: {
   primaryColor: string;
   patient: ReceiptPatient;
+  nameLabel?: string;
   items: ReceiptCartItem[];
   paymentMethod: string;
   paidAmount: number;
@@ -347,6 +350,7 @@ export function ReceiptModal({
       const link = resultLinks.find(l => l.analysisId === item.analysis_id) ?? null;
       return {
         patientName: `${patient.last_name ?? ""} ${patient.first_name ?? ""}`.trim(),
+        nameLabel,
         phone: patient.phone || "—",
         analysisId: item.analysis_id,
         analysisName: item.analysis_name,
@@ -481,7 +485,7 @@ export function ReceiptModal({
 
             <div className="space-y-1.5 text-[12px] mb-4">
               <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Bemor</span>
+                <span className="text-muted-foreground">{nameLabel}</span>
                 <span className="font-medium text-foreground text-right">
                   {patient.last_name} {patient.first_name}
                 </span>

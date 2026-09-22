@@ -4,6 +4,7 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
@@ -12,10 +13,12 @@ import {
   headerCellKey,
   isDynamicCell,
   isInSelection,
+  normalizeCellRotate,
   normalizeCellValueMode,
   normalizeTableData,
   PDF_FONT_FAMILY,
   resizeAdjacentColWidths,
+  type PdfCellRotate,
   type PdfCellValueMode,
   type PdfTableCell,
   type PdfTableData,
@@ -50,6 +53,46 @@ export type CustomPdfTableProps = {
 /** @deprecated use bodyCellKey */
 export function cellKey(row: number, col: number) {
   return `${row}:${col}`;
+}
+
+function rotatedBlockSize(text: string, compact?: boolean) {
+  const len = Math.max(text.trim().length, 3);
+  const char = compact ? 4.8 : 6.4;
+  return Math.round(Math.min(220, Math.max(compact ? 34 : 46, len * char + 12)));
+}
+
+/** Katak ichidagi matnni saqlangan burchakda ko'rsatadi */
+function CellContent({
+  rotate,
+  text,
+  compact,
+  children,
+}: {
+  rotate: PdfCellRotate;
+  text: string;
+  compact?: boolean;
+  children: ReactNode;
+}) {
+  if (rotate === 0) return <>{children}</>;
+  const vertical = rotate === 90 || rotate === 270;
+  const size = vertical ? rotatedBlockSize(text, compact) : undefined;
+  return (
+    <div
+      className="w-full min-w-0 overflow-hidden flex items-center justify-center"
+      style={size ? { height: size, minHeight: size } : undefined}
+    >
+      <div
+        style={{
+          transform: `rotate(${rotate}deg)`,
+          transformOrigin: "center center",
+          whiteSpace: "nowrap",
+          lineHeight: 1.15,
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
 }
 
 function CellValueModeButton({
@@ -249,6 +292,14 @@ export function CustomPdfTable({
     );
   };
 
+  const fieldClass = (rotate: PdfCellRotate, extra = "") =>
+    rotate
+      ? `${compact ? "min-h-[14px] text-[8px]" : "min-h-[22px] text-[11px]"} text-center bg-transparent border-0 outline-none text-black px-0.5 ${extra}`
+      : `${inputCls} px-1 ${extra}`;
+
+  const fieldStyle = (rotate: PdfCellRotate, text: string): CSSProperties | undefined =>
+    rotate ? { width: `${Math.max(4, (text.trim().length || 6) + 1)}ch` } : undefined;
+
   const modeBtn = (
     menuKey: string,
     cell: PdfTableCell,
@@ -292,6 +343,10 @@ export function CustomPdfTable({
               const rs = cell.rowSpan ?? 1;
               const dynamic = isDynamicCell(cell);
               const menuKey = `h:${ri}:${ci}`;
+              const rot = normalizeCellRotate(cell.rotate);
+              const cellStyle: CSSProperties | undefined = rot
+                ? { ...cellBorderStyle, overflow: "hidden" }
+                : cellBorderStyle;
 
               if (editableHeader) {
                 const highlighted =
@@ -311,7 +366,7 @@ export function CustomPdfTable({
                     key={ci}
                     colSpan={cs}
                     rowSpan={rs}
-                    style={cellBorderStyle}
+                    style={cellStyle}
                     className={`${cellBorder} ${pad} p-0 font-semibold relative ${
                       highlighted
                         ? "outline outline-2 outline-offset-[-2px] outline-teal-500 bg-teal-100"
@@ -326,33 +381,42 @@ export function CustomPdfTable({
                     onPointerDown={e => e.stopPropagation()}
                   >
                     <div className="flex items-stretch min-h-full">
-                      {dynamic ? (
-                        <input
-                          value={cell.text}
-                          readOnly
-                          tabIndex={-1}
-                          onMouseDown={e => {
-                            e.stopPropagation();
-                            onSelectHeaderCell?.(ri, ci, e.shiftKey);
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          className={`${inputCls} font-semibold text-center px-1 flex-1 min-w-0 text-slate-400 cursor-default`}
-                          placeholder="Natijada..."
-                          title="Bu katak faqat Natijalar sahifasida tahrirlanadi"
-                        />
-                      ) : (
-                        <input
-                          value={cell.text}
-                          onChange={e => onChangeHeaderCell?.(ri, ci, { text: e.target.value })}
-                          onMouseDown={e => {
-                            e.stopPropagation();
-                            onSelectHeaderCell?.(ri, ci, e.shiftKey);
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          className={`${inputCls} font-semibold text-center px-1 flex-1 min-w-0`}
-                          placeholder="Sarlavha..."
-                        />
-                      )}
+                      <div className="flex-1 min-w-0">
+                        <CellContent rotate={rot} text={cell.text || "Sarlavha"} compact={compact}>
+                          {dynamic ? (
+                            <input
+                              value={cell.text}
+                              readOnly
+                              tabIndex={-1}
+                              onMouseDown={e => {
+                                e.stopPropagation();
+                                onSelectHeaderCell?.(ri, ci, e.shiftKey);
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              className={fieldClass(
+                                rot,
+                                "font-semibold text-slate-400 cursor-default",
+                              )}
+                              style={fieldStyle(rot, cell.text || "Natijada")}
+                              placeholder="Natijada..."
+                              title="Bu katak faqat Natijalar sahifasida tahrirlanadi"
+                            />
+                          ) : (
+                            <input
+                              value={cell.text}
+                              onChange={e => onChangeHeaderCell?.(ri, ci, { text: e.target.value })}
+                              onMouseDown={e => {
+                                e.stopPropagation();
+                                onSelectHeaderCell?.(ri, ci, e.shiftKey);
+                              }}
+                              onClick={e => e.stopPropagation()}
+                              className={fieldClass(rot, "font-semibold")}
+                              style={fieldStyle(rot, cell.text || "Sarlavha")}
+                              placeholder="Sarlavha..."
+                            />
+                          )}
+                        </CellContent>
+                      </div>
                       {modeBtn(menuKey, cell, valueMode =>
                         onChangeHeaderCell?.(ri, ci, { valueMode }),
                       )}
@@ -377,12 +441,14 @@ export function CustomPdfTable({
                         key={ci}
                         colSpan={cs}
                         rowSpan={rs}
-                        style={cellBorderStyle}
+                        style={cellStyle}
                         className={`${cellBorder} ${pad} font-semibold text-center ${
                           hasContent ? filledCellBg : "bg-slate-50"
                         }`}
                       >
-                        {value || "\u00a0"}
+                        <CellContent rotate={rot} text={value} compact={compact}>
+                          {value || "\u00a0"}
+                        </CellContent>
                       </th>
                     );
                   }
@@ -391,19 +457,22 @@ export function CustomPdfTable({
                       key={ci}
                       colSpan={cs}
                       rowSpan={rs}
-                      style={cellBorderStyle}
+                      style={cellStyle}
                       className={`${cellBorder} ${pad} p-0 font-semibold text-center ${
                         hasContent ? filledCellBg : "bg-amber-50/40"
                       }`}
                     >
-                      <input
-                        value={value}
-                        onChange={e => onFillChange?.(key, e.target.value)}
-                        className={`${inputCls} font-semibold`}
-                        onClick={e => e.stopPropagation()}
-                        onPointerDown={e => e.stopPropagation()}
-                        placeholder="Kiriting..."
-                      />
+                      <CellContent rotate={rot} text={value || "Kiriting"} compact={compact}>
+                        <input
+                          value={value}
+                          onChange={e => onFillChange?.(key, e.target.value)}
+                          className={fieldClass(rot, "font-semibold")}
+                          style={fieldStyle(rot, value || "Kiriting")}
+                          onClick={e => e.stopPropagation()}
+                          onPointerDown={e => e.stopPropagation()}
+                          placeholder="Kiriting..."
+                        />
+                      </CellContent>
                     </th>
                   );
                 }
@@ -414,10 +483,12 @@ export function CustomPdfTable({
                   key={ci}
                   colSpan={cs}
                   rowSpan={rs}
-                  style={cellBorderStyle}
+                  style={cellStyle}
                   className={`${cellBorder} ${pad} font-semibold text-center bg-slate-50 relative`}
                 >
-                  {cell.text || "\u00a0"}
+                  <CellContent rotate={rot} text={cell.text} compact={compact}>
+                    {cell.text || "\u00a0"}
+                  </CellContent>
                   {colResizeHandle(ci, cs)}
                 </th>
               );
@@ -445,6 +516,10 @@ export function CustomPdfTable({
                 const rs = cell.rowSpan ?? 1;
                 const dynamic = isDynamicCell(cell);
                 const menuKey = `b:${ri}:${ci}`;
+                const rot = normalizeCellRotate(cell.rotate);
+                const cellStyle: CSSProperties | undefined = rot
+                  ? { ...cellBorderStyle, overflow: "hidden" }
+                  : cellBorderStyle;
 
                 if (editableBody) {
                   const highlighted =
@@ -464,7 +539,7 @@ export function CustomPdfTable({
                       key={ci}
                       colSpan={cs}
                       rowSpan={rs}
-                      style={cellBorderStyle}
+                      style={cellStyle}
                       className={`${cellBorder} ${pad} text-center p-0 relative ${
                         highlighted
                           ? "outline outline-2 outline-offset-[-2px] outline-teal-500 bg-teal-100"
@@ -479,33 +554,39 @@ export function CustomPdfTable({
                       onPointerDown={e => e.stopPropagation()}
                     >
                       <div className="flex items-stretch min-h-full">
-                        {dynamic ? (
-                          <input
-                            value={cell.text}
-                            readOnly
-                            tabIndex={-1}
-                            onMouseDown={e => {
-                              e.stopPropagation();
-                              onSelectBodyCell?.(ri, ci, e.shiftKey);
-                            }}
-                            onClick={e => e.stopPropagation()}
-                            className={`${inputCls} px-1 flex-1 min-w-0 text-slate-400 cursor-default`}
-                            placeholder="Natijada to'ldiriladi..."
-                            title="Bu katak faqat Natijalar sahifasida tahrirlanadi"
-                          />
-                        ) : (
-                          <input
-                            value={cell.text}
-                            onChange={e => onChangeBodyCell?.(ri, ci, { text: e.target.value })}
-                            onMouseDown={e => {
-                              e.stopPropagation();
-                              onSelectBodyCell?.(ri, ci, e.shiftKey);
-                            }}
-                            onClick={e => e.stopPropagation()}
-                            className={`${inputCls} px-1 flex-1 min-w-0`}
-                            placeholder="..."
-                          />
-                        )}
+                        <div className="flex-1 min-w-0">
+                          <CellContent rotate={rot} text={cell.text || "..."} compact={compact}>
+                            {dynamic ? (
+                              <input
+                                value={cell.text}
+                                readOnly
+                                tabIndex={-1}
+                                onMouseDown={e => {
+                                  e.stopPropagation();
+                                  onSelectBodyCell?.(ri, ci, e.shiftKey);
+                                }}
+                                onClick={e => e.stopPropagation()}
+                                className={fieldClass(rot, "text-slate-400 cursor-default")}
+                                style={fieldStyle(rot, cell.text || "Natijada")}
+                                placeholder="Natijada to'ldiriladi..."
+                                title="Bu katak faqat Natijalar sahifasida tahrirlanadi"
+                              />
+                            ) : (
+                              <input
+                                value={cell.text}
+                                onChange={e => onChangeBodyCell?.(ri, ci, { text: e.target.value })}
+                                onMouseDown={e => {
+                                  e.stopPropagation();
+                                  onSelectBodyCell?.(ri, ci, e.shiftKey);
+                                }}
+                                onClick={e => e.stopPropagation()}
+                                className={fieldClass(rot)}
+                                style={fieldStyle(rot, cell.text || "...")}
+                                placeholder="..."
+                              />
+                            )}
+                          </CellContent>
+                        </div>
                         {modeBtn(menuKey, cell, valueMode =>
                           onChangeBodyCell?.(ri, ci, { valueMode }),
                         )}
@@ -529,12 +610,14 @@ export function CustomPdfTable({
                           key={ci}
                           colSpan={cs}
                           rowSpan={rs}
-                          style={cellBorderStyle}
+                          style={cellStyle}
                           className={`${cellBorder} ${pad} text-center ${
                             hasContent ? filledCellBg : ""
                           }`}
                         >
-                          {value || "\u00a0"}
+                          <CellContent rotate={rot} text={value} compact={compact}>
+                            {value || "\u00a0"}
+                          </CellContent>
                         </td>
                       );
                     }
@@ -543,18 +626,22 @@ export function CustomPdfTable({
                         key={ci}
                         colSpan={cs}
                         rowSpan={rs}
+                        style={cellStyle}
                         className={`${cellBorder} ${pad} text-center p-0 ${
                           hasContent ? filledCellBg : ""
                         }`}
                       >
-                        <input
-                          value={value}
-                          onChange={e => onFillChange?.(key, e.target.value)}
-                          className={inputCls}
-                          onClick={e => e.stopPropagation()}
-                          onPointerDown={e => e.stopPropagation()}
-                          placeholder="Kiriting..."
-                        />
+                        <CellContent rotate={rot} text={value || "Kiriting"} compact={compact}>
+                          <input
+                            value={value}
+                            onChange={e => onFillChange?.(key, e.target.value)}
+                            className={fieldClass(rot)}
+                            style={fieldStyle(rot, value || "Kiriting")}
+                            onClick={e => e.stopPropagation()}
+                            onPointerDown={e => e.stopPropagation()}
+                            placeholder="Kiriting..."
+                          />
+                        </CellContent>
                       </td>
                     );
                   }
@@ -564,10 +651,12 @@ export function CustomPdfTable({
                       key={ci}
                       colSpan={cs}
                       rowSpan={rs}
-                      style={cellBorderStyle}
+                      style={cellStyle}
                       className={`${cellBorder} ${pad} text-center`}
                     >
-                      {cell.text || "\u00a0"}
+                      <CellContent rotate={rot} text={cell.text} compact={compact}>
+                        {cell.text || "\u00a0"}
+                      </CellContent>
                     </td>
                   );
                 }
@@ -577,10 +666,12 @@ export function CustomPdfTable({
                     key={ci}
                     colSpan={cs}
                     rowSpan={rs}
-                    style={cellBorderStyle}
+                    style={cellStyle}
                     className={`${cellBorder} ${pad} text-center`}
                   >
-                    {cell.text || "\u00a0"}
+                    <CellContent rotate={rot} text={cell.text} compact={compact}>
+                      {cell.text || "\u00a0"}
+                    </CellContent>
                   </td>
                 );
               })}

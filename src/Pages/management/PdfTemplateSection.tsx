@@ -5,7 +5,7 @@ import {
   Bold, Italic, Underline, Trash2, Save, Plus, RefreshCw, CheckCircle,
   AlertCircle, Loader2, FileText, MousePointer2, AlignLeft, AlignCenter,
   AlignRight, GripVertical, X, Upload, Database, Minus, Combine, Globe,
-  ArrowLeft, FilePlus2, RectangleVertical, RectangleHorizontal,
+  ArrowLeft, FilePlus2, RectangleVertical, RectangleHorizontal, RotateCw,
 } from "lucide-react";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -44,6 +44,8 @@ import {
   loadPdfTemplates,
   mergeBodySelection,
   mergeHeaderSelection,
+  nextCellRotate,
+  normalizeCellRotate,
   normalizeSelection,
   normalizeTableData,
   previewYFromDocumentY,
@@ -63,6 +65,7 @@ import {
   updateHeaderCell,
   upsertPdfTemplateGlobal,
   upsertPdfTemplateRemote,
+  type PdfCellRotate,
   type PdfDynamicFieldKey,
   type PdfElement,
   type PdfElementType,
@@ -1889,6 +1892,25 @@ function FreeTableBuilder({
     );
   };
 
+  const activeRotate = normalizeCellRotate(activeCell?.rotate);
+
+  const applyCellRotate = (rotate: PdfCellRotate) => {
+    if (!bounds) return;
+    let next = data;
+    for (let r = bounds.r1; r <= bounds.r2; r++) {
+      for (let c = bounds.c1; c <= bounds.c2; c++) {
+        const grid = bounds.section === "body" ? next.bodyCells : next.headerCells;
+        const cell = grid[r]?.[c];
+        if (!cell || cell.covered) continue;
+        next =
+          bounds.section === "body"
+            ? updateBodyCell(next, r, c, { rotate })
+            : updateHeaderCell(next, r, c, { rotate });
+      }
+    }
+    onTableData(next);
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-[11px] text-muted-foreground leading-relaxed">
@@ -2049,9 +2071,22 @@ function FreeTableBuilder({
           Ajratish
         </button>
       </div>
+      <button
+        type="button"
+        disabled={!bounds}
+        onClick={() => applyCellRotate(nextCellRotate(activeRotate))}
+        className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-[11px] font-semibold disabled:opacity-40 hover:bg-secondary"
+        style={bounds ? { borderColor: primaryColor, color: primaryColor } : undefined}
+        title="Tanlangan katak matnini 90° ga aylantiradi"
+      >
+        <RotateCw className="w-3.5 h-3.5" />
+        Aylantirish
+        {bounds ? <span className="tabular-nums opacity-80">{activeRotate}°</span> : null}
+      </button>
       <p className="text-[10px] text-muted-foreground">
         Header yoki body katakni tanlang, <kbd className="px-1 rounded bg-secondary">Shift</kbd>
-        +bosib diapazonni kengaytiring, so&apos;ng Birlashtirish.
+        +bosib diapazonni kengaytiring, so&apos;ng Birlashtirish. Aylantirish tanlangan
+        katak ichidagi matnni 90° qadam bilan buradi.
       </p>
 
       {activeCell && active && bounds && (
@@ -2071,6 +2106,32 @@ function FreeTableBuilder({
             >
               Bekor
             </button>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold text-muted-foreground mb-1">
+              Matn yo&apos;nalishi
+            </p>
+            <div className="grid grid-cols-4 gap-1">
+              {([0, 90, 180, 270] as const).map(deg => {
+                const on = activeRotate === deg;
+                return (
+                  <button
+                    key={deg}
+                    type="button"
+                    onClick={() => applyCellRotate(deg)}
+                    className={`py-1.5 rounded-lg text-[10px] font-semibold border ${
+                      on
+                        ? "bg-card text-foreground"
+                        : "border-border text-muted-foreground hover:bg-card"
+                    }`}
+                    style={on ? { borderColor: primaryColor, color: primaryColor } : undefined}
+                    title={deg === 0 ? "Oddiy" : `${deg}°`}
+                  >
+                    {deg}°
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div className="flex gap-1.5">
             <button

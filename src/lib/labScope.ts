@@ -7,17 +7,46 @@ export type LabScope = {
   analysisIds: Set<number>;
 };
 
-/** lab_director / lab_asistant — login qilgan user qaysi lab(lar)ga tegishli */
+function addUserId(ids: number[], raw: unknown) {
+  if (raw == null || raw === "") return;
+  if (Array.isArray(raw)) {
+    for (const item of raw) addUserId(ids, item);
+    return;
+  }
+  if (typeof raw === "number" || typeof raw === "string") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) ids.push(n);
+    return;
+  }
+  if (typeof raw === "object" && raw !== null && "id" in raw) {
+    const n = Number((raw as { id: unknown }).id);
+    if (Number.isFinite(n) && n > 0) ids.push(n);
+  }
+}
+
+/** lab_director / lab_asistant / kassir_sangig — login qilgan user qaysi lab(lar)ga tegishli */
+export function userBelongsToLab(lab: Laboratory, userId: number): boolean {
+  if (Number(lab.lab_director?.id) === userId) return true;
+  if ((lab.lab_assistants ?? []).some(a => Number(a.id) === userId)) return true;
+
+  const extra = lab as Laboratory & Record<string, unknown>;
+  const ids: number[] = [];
+  addUserId(ids, extra.kassir_sangig);
+  addUserId(ids, extra.kassirSangig);
+  addUserId(ids, extra.kassir_sangigs);
+  addUserId(ids, extra.kassir_sangig_id);
+  addUserId(ids, extra.kassirSangigId);
+  addUserId(ids, extra.users);
+  addUserId(ids, extra.user);
+  return ids.includes(userId);
+}
+
 export function resolveUserLabScope(labs: Laboratory[], userId: number): LabScope {
   const labIds = new Set<number>();
   const analysisIds = new Set<number>();
 
   for (const lab of labs) {
-    const isDirector = Number(lab.lab_director?.id) === userId;
-    const isAssistant = (lab.lab_assistants ?? []).some(
-      a => Number(a.id) === userId,
-    );
-    if (!isDirector && !isAssistant) continue;
+    if (!userBelongsToLab(lab, userId)) continue;
 
     labIds.add(lab.id);
     for (const raw of lab.analysis ?? []) {

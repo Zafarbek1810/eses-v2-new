@@ -17,6 +17,7 @@ import { getOrderTotalAmountRange, type OrderTotalAmountRange } from "@/api/orde
 import { getAllLaboratories } from "@/api/laboratory";
 import { getStoredUser } from "@/api/session";
 import { normalizeRoleName } from "@/lib/roles";
+import { resolveUserLabScope } from "@/lib/labScope";
 import { Calendar as DatePickerCalendar } from "@/app/components/ui/calendar";
 import {
   Popover,
@@ -83,6 +84,33 @@ function currentMonthRange() {
 }
 
 const emptyRange = (): OrderTotalAmountRange => ({ totalFinalAmount: 0, count: 0 });
+
+function sumRanges(parts: OrderTotalAmountRange[]): OrderTotalAmountRange {
+  return parts.reduce(
+    (acc, p) => ({
+      totalFinalAmount: acc.totalFinalAmount + p.totalFinalAmount,
+      count: acc.count + p.count,
+    }),
+    emptyRange(),
+  );
+}
+
+async function fetchRangeForLabs(
+  labIds: number[] | null,
+  params: Parameters<typeof getOrderTotalAmountRange>[0],
+): Promise<OrderTotalAmountRange> {
+  if (labIds && labIds.length === 0) return emptyRange();
+  if (!labIds || labIds.length === 0) {
+    return getOrderTotalAmountRange(params);
+  }
+  if (labIds.length === 1) {
+    return getOrderTotalAmountRange({ ...params, lab_id: labIds[0] });
+  }
+  const parts = await Promise.all(
+    labIds.map(id => getOrderTotalAmountRange({ ...params, lab_id: id })),
+  );
+  return sumRanges(parts);
+}
 
 const DATE_PRESETS = [
   {
@@ -203,13 +231,16 @@ const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconCo
 
 export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const role = normalizeRoleName(getStoredUser()?.role?.name);
+  const isKassirSangig = role === "kassir_sangig";
   const isLabStatsRole =
-    role === "lab_director" || role === "lab_asistant" || role === "director";
+    role === "lab_director" || role === "lab_asistant" || role === "director" || isKassirSangig;
 
   const initialRange = useMemo(() => currentMonthRange(), []);
   const [startDate, setStartDate] = useState(initialRange.startDate);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [scopedLabIds, setScopedLabIds] = useState<number[] | null>(null);
+  const [labScopeReady, setLabScopeReady] = useState(!isKassirSangig);
 
   const [labStatsLoading, setLabStatsLoading] = useState(isLabStatsRole);
   const [labAll, setLabAll] = useState<OrderTotalAmountRange>(emptyRange);
@@ -247,21 +278,58 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   };
 
   useEffect(() => {
-    if (!isLabStatsRole) return;
+    if (!isKassirSangig) {
+      setScopedLabIds(null);
+      setLabScopeReady(true);
+      return;
+    }
 
     let cancelled = false;
+    setLabScopeReady(false);
+
+    void (async () => {
+      const userId = getStoredUser()?.id;
+      if (!userId) {
+        if (!cancelled) {
+          setScopedLabIds([]);
+          setLabScopeReady(true);
+        }
+        return;
+      }
+      try {
+        const labs = await getAllLaboratories();
+        if (cancelled) return;
+        const scope = resolveUserLabScope(Array.isArray(labs) ? labs : [], userId);
+        setScopedLabIds([...scope.labIds]);
+      } catch {
+        if (!cancelled) setScopedLabIds([]);
+      } finally {
+        if (!cancelled) setLabScopeReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isKassirSangig]);
+
+  useEffect(() => {
+    if (!isLabStatsRole || !labScopeReady) return;
+
+    let cancelled = false;
+    const labIds = isKassirSangig ? (scopedLabIds ?? []) : null;
 
     void (async () => {
       setLabStatsLoading(true);
       try {
         const baseParams = { startDate, endDate };
         const [all, paid, pendingPay, cash, card, click] = await Promise.all([
-          getOrderTotalAmountRange(baseParams),
-          getOrderTotalAmountRange({ ...baseParams, payment_status: "paid" }),
-          getOrderTotalAmountRange({ ...baseParams, payment_status: "pending" }),
-          getOrderTotalAmountRange({ ...baseParams, payment_method: "cash" }),
-          getOrderTotalAmountRange({ ...baseParams, payment_method: "card" }),
-          getOrderTotalAmountRange({ ...baseParams, payment_method: "click" }),
+          fetchRangeForLabs(labIds, baseParams),
+          fetchRangeForLabs(labIds, { ...baseParams, payment_status: "paid" }),
+          fetchRangeForLabs(labIds, { ...baseParams, payment_status: "pending" }),
+          fetchRangeForLabs(labIds, { ...baseParams, payment_method: "cash" }),
+          fetchRangeForLabs(labIds, { ...baseParams, payment_method: "card" }),
+          fetchRangeForLabs(labIds, { ...baseParams, payment_method: "click" }),
         ]);
         if (cancelled) return;
         setLabAll(all);
@@ -286,9 +354,11 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     return () => {
       cancelled = true;
     };
-  }, [isLabStatsRole, startDate, endDate]);
+  }, [isLabStatsRole, isKassirSangig, labScopeReady, scopedLabIds, startDate, endDate]);
 
   useEffect(() => {
+    if (isKassirSangig && !labScopeReady) return;
+
     let cancelled = false;
 
     void (async () => {
@@ -297,7 +367,11 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         const labs = await getAllLaboratories();
         if (cancelled) return;
 
-        const list = Array.isArray(labs) ? labs : [];
+        const allLabs = Array.isArray(labs) ? labs : [];
+        const scoped = isKassirSangig ? new Set(scopedLabIds ?? []) : null;
+        const list = scoped
+          ? allLabs.filter(lab => scoped.has(lab.id))
+          : allLabs;
         const rows: LabChartRow[] = [];
 
         // Parallel, lekin juda ko'p lab bo'lsa batch qilib so'raymiz
@@ -339,7 +413,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isKassirSangig, labScopeReady, scopedLabIds]);
 
   const defaultStats = [
     {
@@ -500,7 +574,8 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${isKassirSangig ? "" : "xl:grid-cols-3"}`}>
+        {!isKassirSangig && (
         <div className="xl:col-span-2 bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
             <div>
@@ -542,12 +617,15 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        )}
 
         <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="mb-5">
             <h3 className="text-[14px] font-bold text-foreground tracking-tight">Laboratoriyalar</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Buyurtmalar soni · barcha laboratoriyalar
+              {isKassirSangig
+                ? "Buyurtmalar soni · biriktirilgan laboratoriya"
+                : "Buyurtmalar soni · barcha laboratoriyalar"}
             </p>
           </div>
           {labChartLoading ? (
@@ -609,6 +687,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         </div>
       </div>
 
+      {!isKassirSangig && (
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2 bg-card rounded-xl border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-secondary/25">
@@ -725,6 +804,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
           </div>
         </div>
       </div>
+      )}
     </main>
   );
 };

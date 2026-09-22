@@ -88,6 +88,8 @@ function normalizeLaboratoryRecord(raw: unknown): Laboratory | null {
   const companyIdRaw = nested.company_id ?? nested.companyId ?? obj.company_id ?? obj.companyId ?? company?.id;
   const companyId = Number(companyIdRaw);
   return {
+    ...obj,
+    ...nested,
     id,
     name: String(nested.name ?? obj.name ?? ""),
     createdAt: String(nested.createdAt ?? nested.created_at ?? obj.createdAt ?? obj.created_at ?? ""),

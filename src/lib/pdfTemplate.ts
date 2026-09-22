@@ -415,6 +415,9 @@ export function resolveDynamicValue(
 /** One cell in the editable table */
 export type PdfCellValueMode = "static" | "dynamic";
 
+/** Katak ichidagi matn burchagi (soat yo'nalishi) */
+export type PdfCellRotate = 0 | 90 | 180 | 270;
+
 export type PdfTableCell = {
   text: string;
   colSpan?: number;
@@ -426,6 +429,8 @@ export type PdfTableCell = {
    * dynamic — Natijalar sahifasida to'ldiriladi / o'zgartiriladi
    */
   valueMode?: PdfCellValueMode;
+  /** Ichki matnni aylantirish: 0 | 90 | 180 | 270 */
+  rotate?: PdfCellRotate;
 };
 
 export function normalizeCellValueMode(
@@ -436,6 +441,19 @@ export function normalizeCellValueMode(
 
 export function isDynamicCell(cell: Pick<PdfTableCell, "valueMode"> | null | undefined) {
   return normalizeCellValueMode(cell?.valueMode) === "dynamic";
+}
+
+export function normalizeCellRotate(value: unknown): PdfCellRotate {
+  const n = Number(value);
+  if (n === 90 || n === 180 || n === 270) return n;
+  return 0;
+}
+
+export function nextCellRotate(value: PdfCellRotate): PdfCellRotate {
+  if (value === 0) return 90;
+  if (value === 90) return 180;
+  if (value === 180) return 270;
+  return 0;
 }
 
 /** Full editable table: header + body (manual), optional per-column widths */
@@ -885,6 +903,7 @@ function makeCellGrid(rows: number, cols: number, seed?: PdfTableCell[][]): PdfT
         rowSpan: Math.max(1, Number(cell?.rowSpan) || 1),
         covered: Boolean(cell?.covered),
         valueMode: normalizeCellValueMode(cell?.valueMode),
+        rotate: normalizeCellRotate(cell?.rotate),
       });
     }
     out.push(row);
@@ -923,6 +942,48 @@ export function bodyCellKey(row: number | string, col: number) {
 /** Header fill key for dynamic header cells on Results */
 export function headerCellKey(row: number, col: number) {
   return `h:${row}:${col}`;
+}
+
+export function listPdfTemplatesForAnalysis(
+  analysisId: number,
+  list: PdfTemplate[],
+): PdfTemplate[] {
+  const id = Number(analysisId);
+  if (!Number.isFinite(id) || id <= 0) return [];
+  return list.filter(t => resolvePdfTemplateAnalysisId(t) === id);
+}
+
+/** Seed fill map from dynamic cells only; saved values win when present */
+export function seedDynamicFillFromTemplate(
+  tpl: PdfTemplate | null,
+  saved: Record<string, string> = {},
+): Record<string, string> {
+  const table = tpl?.elements.find(el => el.type === "table");
+  const grid = normalizeTableData(table?.tableData);
+  const next: Record<string, string> = {};
+
+  for (let r = 0; r < grid.headerRows; r++) {
+    for (let c = 0; c < grid.cols; c++) {
+      const cell = grid.headerCells[r][c];
+      if (cell.covered || !isDynamicCell(cell)) continue;
+      const key = headerCellKey(r, c);
+      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
+        ? String(saved[key] ?? "")
+        : "";
+    }
+  }
+
+  for (let r = 0; r < grid.bodyRows; r++) {
+    for (let c = 0; c < grid.cols; c++) {
+      const cell = grid.bodyCells[r][c];
+      if (cell.covered || !isDynamicCell(cell)) continue;
+      const key = bodyCellKey(r, c);
+      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
+        ? String(saved[key] ?? "")
+        : "";
+    }
+  }
+  return next;
 }
 
 export function normalizeSelection(sel: PdfTableSelection): PdfTableSelection {
@@ -1216,6 +1277,7 @@ export function mergeHeaderSelection(
   const master = headerCells[b.r1][b.c1];
   const text = master.text;
   const valueMode = normalizeCellValueMode(master.valueMode);
+  const rotate = normalizeCellRotate(master.rotate);
   const rowSpan = b.r2 - b.r1 + 1;
   const colSpan = b.c2 - b.c1 + 1;
 
@@ -1228,6 +1290,7 @@ export function mergeHeaderSelection(
           rowSpan,
           covered: false,
           valueMode,
+          rotate,
         };
       } else {
         headerCells[r][c] = {
@@ -1255,6 +1318,7 @@ export function mergeBodySelection(
   const master = bodyCells[b.r1][b.c1];
   const text = master.text;
   const valueMode = normalizeCellValueMode(master.valueMode);
+  const rotate = normalizeCellRotate(master.rotate);
   const rowSpan = b.r2 - b.r1 + 1;
   const colSpan = b.c2 - b.c1 + 1;
 
@@ -1267,6 +1331,7 @@ export function mergeBodySelection(
           rowSpan,
           covered: false,
           valueMode,
+          rotate,
         };
       } else {
         bodyCells[r][c] = {
@@ -1294,6 +1359,7 @@ function sanitizeGridMerges(
     rs: number;
     cs: number;
     valueMode: PdfCellValueMode;
+    rotate: PdfCellRotate;
   }> = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -1308,6 +1374,7 @@ function sanitizeGridMerges(
         rs,
         cs,
         valueMode: normalizeCellValueMode(cell.valueMode),
+        rotate: normalizeCellRotate(cell.rotate),
       });
     }
   }
@@ -1329,6 +1396,7 @@ function sanitizeGridMerges(
       rowSpan: m.rs,
       covered: false,
       valueMode: m.valueMode,
+      rotate: m.rotate,
     };
     for (let rr = m.r; rr < m.r + m.rs; rr++) {
       for (let cc = m.c; cc < m.c + m.cs; cc++) {

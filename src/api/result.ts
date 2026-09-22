@@ -81,6 +81,68 @@ export function resolveResultItemAnalysisId(
 
 const GRID_PREFIX = "__grid__:";
 const SEV_PREFIX = "__sev__:";
+export const GRID_TEMPLATE_ID_KEY = "__templateId";
+export const GRID_OVERLAYS_KEY = "__overlays__";
+
+export type PdfOverlayText = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: string;
+  fontSize?: number;
+};
+
+export function createPdfOverlayText(x: number, y: number): PdfOverlayText {
+  return {
+    id: `ov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    x,
+    y,
+    width: 220,
+    height: 36,
+    content: "",
+    fontSize: 12,
+  };
+}
+
+export function decodePdfOverlays(raw: unknown): PdfOverlayText[] {
+  if (raw == null || raw === "") return [];
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  const list: PdfOverlayText[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const x = Number(obj.x);
+    const y = Number(obj.y);
+    const width = Number(obj.width);
+    const height = Number(obj.height);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    list.push({
+      id: typeof obj.id === "string" && obj.id ? obj.id : createPdfOverlayText(x, y).id,
+      x,
+      y,
+      width: Number.isFinite(width) && width > 0 ? width : 220,
+      height: Number.isFinite(height) && height > 0 ? height : 36,
+      content: String(obj.content ?? ""),
+      fontSize: Number.isFinite(Number(obj.fontSize)) ? Number(obj.fontSize) : 12,
+    });
+  }
+  return list;
+}
+
+export function overlaysFromFill(fill: Record<string, string> | null | undefined): PdfOverlayText[] {
+  if (!fill) return [];
+  return decodePdfOverlays(fill[GRID_OVERLAYS_KEY]);
+}
 
 export function getResultItemNormValue(
   item: Pick<ResultItemPayload, "normValue" | "norm_value"> & Record<string, unknown>,
@@ -327,6 +389,22 @@ export function encodeGridFill(values: Record<string, string>): string {
   return `${GRID_PREFIX}${JSON.stringify(values)}`;
 }
 
+function fillValueToString(key: string, value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (key === GRID_OVERLAYS_KEY || typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function isFillMapKey(key: string) {
+  return (
+    /^\d+:\d+$/.test(key) ||
+    /^h:\d+:\d+$/.test(key) ||
+    key === GRID_TEMPLATE_ID_KEY ||
+    key === GRID_OVERLAYS_KEY
+  );
+}
+
 function parseGridFillPayload(raw: unknown): Record<string, string> | null {
   if (raw == null || raw === "") return null;
 
@@ -335,9 +413,9 @@ function parseGridFillPayload(raw: unknown): Record<string, string> | null {
     const entries = Object.entries(obj);
     if (entries.length === 0) return {};
     // Fill map: "0:1", "h:0:0" — severity map emas
-    const looksLikeFill = entries.some(([k]) => /^\d+:\d+$/.test(k) || /^h:\d+:\d+$/.test(k));
+    const looksLikeFill = entries.some(([k]) => isFillMapKey(k));
     if (looksLikeFill) {
-      return Object.fromEntries(entries.map(([k, v]) => [k, String(v ?? "")]));
+      return Object.fromEntries(entries.map(([k, v]) => [k, fillValueToString(k, v)]));
     }
     return null;
   }
@@ -355,9 +433,9 @@ function parseGridFillPayload(raw: unknown): Record<string, string> | null {
     const entries = Object.entries(obj);
     const looksLikeFill =
       entries.length === 0 ||
-      entries.some(([k]) => /^\d+:\d+$/.test(k) || /^h:\d+:\d+$/.test(k));
+      entries.some(([k]) => isFillMapKey(k));
     if (!looksLikeFill) return null;
-    return Object.fromEntries(entries.map(([k, v]) => [k, String(v ?? "")]));
+    return Object.fromEntries(entries.map(([k, v]) => [k, fillValueToString(k, v)]));
   } catch {
     return null;
   }

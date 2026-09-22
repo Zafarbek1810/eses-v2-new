@@ -4,17 +4,25 @@ import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
   FlaskConical, MessageSquare, Search, UserPlus, ClipboardList, Pencil,
   RefreshCw, QrCode, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  User, Building2,
 } from "lucide-react";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
 import { addOrder, updateOrder, updatePaymentStatus, type PaymentMethod } from "@/api/order";
+import { addResult, buildResultItemFromGrid, GRID_TEMPLATE_ID_KEY } from "@/api/result";
 import { getStoredCompanyId, getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
-import { fetchPdfTemplatesFromApi } from "@/lib/pdfTemplate";
+import {
+  fetchPdfTemplatesFromApi,
+  listPdfTemplatesForAnalysis,
+  seedDynamicFillFromTemplate,
+  type PdfTemplate,
+} from "@/lib/pdfTemplate";
 import { ReceiptModal, buildReceiptQrLinks, type ResultQrLink } from "@/components/ReceiptModal";
+import { KassaSampleTemplates } from "@/components/KassaSampleTemplates";
 
 type PatientFilterForm = {
   first_name: string;
@@ -133,6 +141,13 @@ const PAYMENT_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Naqd" },
   { value: "card", label: "Karta" },
   { value: "click", label: "Click" },
+];
+
+type KassaMode = "patient" | "organization";
+
+const KASSA_TABS: { id: KassaMode; label: string; icon: typeof User }[] = [
+  { id: "patient", label: "Bemor uchun", icon: User },
+  { id: "organization", label: "Tashkilot uchun", icon: Building2 },
 ];
 
 function formatPrice(price: number) {
@@ -677,6 +692,8 @@ export function OrderPage({
   onPatientChange: (patientId: number | null) => void;
   onEditPatient?: (patientId: number) => void;
 }) {
+  const [kassaMode, setKassaMode] = useState<KassaMode>("patient");
+  const [organizationName, setOrganizationName] = useState("");
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -709,6 +726,10 @@ export function OrderPage({
   const createdOrderIdRef = useRef<number | null>(null);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [removeTargetKey, setRemoveTargetKey] = useState<string | null>(null);
+  const [pdfTemplates, setPdfTemplates] = useState<PdfTemplate[]>([]);
+  const [pdfTemplatesLoading, setPdfTemplatesLoading] = useState(false);
+  const [selectedTemplateByKey, setSelectedTemplateByKey] = useState<Record<string, string>>({});
+  const [fillByKey, setFillByKey] = useState<Record<string, Record<string, string>>>({});
 
   const pushToast = (text: string, type: ToastMsg["type"]) => {
     const id = Date.now() + Math.random();
@@ -730,6 +751,8 @@ export function OrderPage({
     setPaymentPaid(false);
     setPaidAmount(0);
     createdOrderIdRef.current = null;
+    setSelectedTemplateByKey({});
+    setFillByKey({});
   };
 
   useEffect(() => {
@@ -787,6 +810,25 @@ export function OrderPage({
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (kassaMode !== "organization") return;
+    let cancelled = false;
+    void (async () => {
+      setPdfTemplatesLoading(true);
+      try {
+        const list = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined);
+        if (!cancelled) setPdfTemplates(Array.isArray(list) ? list : []);
+      } catch {
+        if (!cancelled) setPdfTemplates([]);
+      } finally {
+        if (!cancelled) setPdfTemplatesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [kassaMode]);
 
   const setPatientFilterField = <K extends keyof PatientFilterForm>(
     k: K,
@@ -849,11 +891,24 @@ export function OrderPage({
   };
 
   useEffect(() => {
+    if (patientId != null) setKassaMode("patient");
+  }, [patientId]);
+
+  useEffect(() => {
     if (patientId != null) return;
+    if (kassaMode !== "patient") return;
     setPatientPage(1);
     void loadPatients(EMPTY_PATIENT_FILTER, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial list when opening kassa without patient
-  }, [patientId]);
+  }, [patientId, kassaMode]);
+
+  const switchKassaMode = (mode: KassaMode) => {
+    if (mode === kassaMode) return;
+    setKassaMode(mode);
+    setOrganizationName("");
+    if (patientId != null) onPatientChange(null);
+    else resetOrderForm();
+  };
 
   const clearPatient = () => {
     onPatientChange(null);
@@ -911,6 +966,42 @@ export function OrderPage({
     setItems(list => list.filter(i => i.key !== key));
     setPaymentPaid(false);
     setRemoveTargetKey(null);
+    setSelectedTemplateByKey(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setFillByKey(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleSelectSampleTemplate = (itemKey: string, templateId: string) => {
+    const item = items.find(i => i.key === itemKey);
+    const tpl = pdfTemplates.find(t => t.id === templateId);
+    if (!item || !tpl) return;
+    setSelectedTemplateByKey(prev => ({ ...prev, [itemKey]: templateId }));
+    setFillByKey(prev => ({
+      ...prev,
+      [itemKey]: {
+        ...seedDynamicFillFromTemplate(tpl, prev[itemKey] ?? {}),
+        [GRID_TEMPLATE_ID_KEY]: templateId,
+      },
+    }));
+  };
+
+  const handleSampleFillChange = (itemKey: string, cellKey: string, value: string) => {
+    setFillByKey(prev => ({
+      ...prev,
+      [itemKey]: {
+        ...(prev[itemKey] ?? {}),
+        [cellKey]: value,
+      },
+    }));
   };
 
   const removeTarget = removeTargetKey
@@ -935,10 +1026,31 @@ export function OrderPage({
 
   const persistOrder = async (): Promise<number | null> => {
     if (createdOrderIdRef.current) return createdOrderIdRef.current;
-    if (!patient) return null;
+    const isOrg = kassaMode === "organization";
+    const orgName = organizationName.trim();
+    const selectedPatient = isOrg ? null : patient;
+    if (!isOrg && !selectedPatient) return null;
+    if (isOrg && !orgName) {
+      pushToast("Tashkilot nomini kiriting", "info");
+      return null;
+    }
     if (items.length === 0) {
       pushToast("Kamida bitta analiz qo'shing", "info");
       return null;
+    }
+    if (isOrg) {
+      if (pdfTemplatesLoading) {
+        pushToast("Shablonlar yuklanmoqda, biroz kuting", "info");
+        return null;
+      }
+      const missingTemplate = items.find(item => {
+        const tpls = listPdfTemplatesForAnalysis(item.analysis_id, pdfTemplates);
+        return tpls.length > 0 && !selectedTemplateByKey[item.key];
+      });
+      if (missingTemplate) {
+        pushToast("Har bir analiz uchun PDF shablon tanlang", "info");
+        return null;
+      }
     }
     if (!paymentMethod) {
       pushToast("To'lov turini tanlang", "info");
@@ -963,15 +1075,16 @@ export function OrderPage({
     }
 
     const created = await addOrder({
-      order_type: "patient",
+      order_type: isOrg ? "sample" : "patient",
       payment_method: paymentMethod,
       discount_percent: discountValue,
-      street: patient.street || null,
-      village: patient.village || null,
-      description: patient.description || null,
-      district_id: patient.district_id ?? patient.district?.id ?? null,
-      patient_id: patient.id,
+      street: selectedPatient?.street || null,
+      village: selectedPatient?.village || null,
+      description: selectedPatient?.description || null,
+      district_id: selectedPatient?.district_id ?? selectedPatient?.district?.id ?? null,
+      patient_id: selectedPatient?.id ?? null,
       owner_id: user.id,
+      ...(isOrg ? { name: orgName } : {}),
       items: items.map(i => ({
         analysis_id: i.analysis_id,
         laboratory_id: i.laboratory_id,
@@ -987,6 +1100,28 @@ export function OrderPage({
 
     createdOrderIdRef.current = id;
 
+    if (isOrg) {
+      const resultItems = items
+        .filter(item => selectedTemplateByKey[item.key])
+        .map(item =>
+          buildResultItemFromGrid(
+            item.analysis_id,
+            fillByKey[item.key] ?? { [GRID_TEMPLATE_ID_KEY]: selectedTemplateByKey[item.key] },
+          ),
+        );
+      if (resultItems.length > 0) {
+        try {
+          await addResult({
+            order_id: id,
+            lab_director_id: user.id,
+            result_item: resultItems,
+          });
+        } catch {
+          pushToast("Order yaratildi, lekin shablon ma'lumotlarini saqlab bo'lmadi", "info");
+        }
+      }
+    }
+
     if (paymentPaid) {
       try {
         await updatePaymentStatus(id, "paid");
@@ -994,7 +1129,7 @@ export function OrderPage({
         pushToast("Order yaratildi, lekin to'lov holatini yangilab bo'lmadi", "info");
       }
 
-      if (sendSms) {
+      if (sendSms && kassaMode === "patient") {
         try {
           await updateOrder(id, { payment_sms: true });
         } catch {
@@ -1036,7 +1171,14 @@ export function OrderPage({
             : "Order muvaffaqiyatli yaratildi",
         "success",
       );
-      setTimeout(() => clearPatient(), 900);
+      setTimeout(() => {
+        if (kassaMode === "patient") {
+          clearPatient();
+          return;
+        }
+        setOrganizationName("");
+        resetOrderForm();
+      }, 900);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Order yaratib bo'lmadi", "error");
     } finally {
@@ -1072,10 +1214,12 @@ export function OrderPage({
         <div>
           <h2 className="text-[15px] font-semibold text-foreground">Kassa</h2>
           <p className="text-xs text-muted-foreground">
-            Bemor uchun analizlar va to&apos;lovni rasmiylashtirish
+            {kassaMode === "organization"
+              ? "Tashkilot uchun analizlar va to'lovni rasmiylashtirish"
+              : "Bemor uchun analizlar va to'lovni rasmiylashtirish"}
           </p>
         </div>
-        {patientId != null && (
+        {kassaMode === "patient" && patientId != null && (
           <button
             type="button"
             onClick={clearPatient}
@@ -1087,7 +1231,28 @@ export function OrderPage({
         )}
       </div>
 
-      {patientId == null ? (
+      <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-secondary/70 border border-border">
+        {KASSA_TABS.map(tab => {
+          const active = kassaMode === tab.id;
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => switchKassaMode(tab.id)}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-colors ${
+                active ? "text-white" : "text-muted-foreground hover:text-foreground"
+              }`}
+              style={active ? { background: primaryColor } : undefined}
+            >
+              <Icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {kassaMode === "patient" && patientId == null ? (
         <section className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
           <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
             <div className="flex items-center gap-3">
@@ -1375,12 +1540,12 @@ export function OrderPage({
             </div>
           </div>
         </section>
-      ) : loading ? (
+      ) : kassaMode === "patient" && loading ? (
         <div className="bg-card rounded-2xl border border-border p-12 flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 animate-spin" style={{ color: primaryColor }} />
           <p className="text-sm text-muted-foreground">Bemor yuklanmoqda...</p>
         </div>
-      ) : error ? (
+      ) : kassaMode === "patient" && error ? (
         <div className="bg-card rounded-2xl border border-red-200 p-8 flex flex-col items-center gap-3">
           <AlertCircle className="w-8 h-8 text-red-500" />
           <p className="text-sm text-foreground">{error}</p>
@@ -1393,15 +1558,29 @@ export function OrderPage({
             Boshqa bemorni tanlash
           </button>
         </div>
-      ) : patient ? (
+      ) : kassaMode === "organization" || patient ? (
         <>
+          {kassaMode === "organization" && (
+            <section className="bg-card rounded-2xl border border-border shadow-sm p-5">
+              <label className="block text-xs font-semibold text-foreground mb-1.5">
+                Tashkilot nomi
+              </label>
+              <input
+                type="text"
+                value={organizationName}
+                onChange={e => setOrganizationName(e.target.value)}
+                placeholder="Tashkilot nomini kiriting"
+                className="w-full max-w-xl bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
+              />
+            </section>
+          )}
           <section className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
             <div className="overflow-x-auto ses-scrollbar">
               <table className="w-full min-w-[1000px] text-left">
                 <thead>
                   <tr className="border-b border-border bg-secondary/50">
                     <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Bemor
+                      {kassaMode === "organization" ? "Tashkilot" : "Bemor"}
                     </th>
                     <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Analiz turi
@@ -1421,27 +1600,37 @@ export function OrderPage({
                     <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Holat
                     </th>
-                    <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      SMS
-                    </th>
+                    {kassaMode === "patient" && (
+                      <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        SMS
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   <tr className="align-top">
                     <td className="px-4 py-4 border-b border-border min-w-[200px]">
-                      <p className="text-[13px] font-semibold text-foreground">
-                        {patient.last_name} {patient.first_name}
-                      </p>
-                      <p className="text-[12px] text-muted-foreground mt-1">
-                        Tel: {patient.phone || "—"}
-                      </p>
-                      <p className="text-[12px] text-muted-foreground mt-0.5">
-                        Tuman: {patient.district?.name ?? "—"}
-                      </p>
-                      <p className="text-[12px] text-muted-foreground mt-0.5 whitespace-pre-line">
-                        Sana:{" "}
-                        {patient.createdAt ? formatDate(patient.createdAt) : "—"}
-                      </p>
+                      {kassaMode === "organization" ? (
+                        <p className="text-[13px] font-semibold text-foreground">
+                          {organizationName.trim() || "Tashkilot nomi kiritilmagan"}
+                        </p>
+                      ) : patient ? (
+                        <>
+                          <p className="text-[13px] font-semibold text-foreground">
+                            {patient.last_name} {patient.first_name}
+                          </p>
+                          <p className="text-[12px] text-muted-foreground mt-1">
+                            Tel: {patient.phone || "—"}
+                          </p>
+                          <p className="text-[12px] text-muted-foreground mt-0.5">
+                            Tuman: {patient.district?.name ?? "—"}
+                          </p>
+                          <p className="text-[12px] text-muted-foreground mt-0.5 whitespace-pre-line">
+                            Sana:{" "}
+                            {patient.createdAt ? formatDate(patient.createdAt) : "—"}
+                          </p>
+                        </>
+                      ) : null}
                     </td>
 
                     <td className="px-4 py-4 border-b border-border min-w-[220px]">
@@ -1612,42 +1801,65 @@ export function OrderPage({
                       </div>
                     </td>
 
-                    <td className="px-4 py-4 border-b border-border min-w-[120px]">
-                      <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={sendSms}
-                          onChange={e => setSendSms(e.target.checked)}
-                          className="sr-only"
-                        />
-                        <span
-                          className={`w-9 h-5 rounded-full relative transition-colors ${
-                            sendSms ? "" : "bg-secondary border border-border"
-                          }`}
-                          style={sendSms ? { background: primaryColor } : undefined}
-                        >
-                          <span
-                            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                              sendSms ? "left-4" : "left-0.5"
-                            }`}
+                    {kassaMode === "patient" && (
+                      <td className="px-4 py-4 border-b border-border min-w-[120px]">
+                        <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={sendSms}
+                            onChange={e => setSendSms(e.target.checked)}
+                            className="sr-only"
                           />
-                        </span>
-                        <span className="text-[12px] text-foreground flex items-center gap-1">
-                          <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
-                          {sendSms ? "Ha" : "Yo'q"}
-                        </span>
-                      </label>
-                    </td>
+                          <span
+                            className={`w-9 h-5 rounded-full relative transition-colors ${
+                              sendSms ? "" : "bg-secondary border border-border"
+                            }`}
+                            style={sendSms ? { background: primaryColor } : undefined}
+                          >
+                            <span
+                              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                                sendSms ? "left-4" : "left-0.5"
+                              }`}
+                            />
+                          </span>
+                          <span className="text-[12px] text-foreground flex items-center gap-1">
+                            <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                            {sendSms ? "Ha" : "Yo'q"}
+                          </span>
+                        </label>
+                      </td>
+                    )}
                   </tr>
                 </tbody>
               </table>
             </div>
           </section>
 
+          {kassaMode === "organization" && (
+            <KassaSampleTemplates
+              items={items}
+              primaryColor={primaryColor}
+              organizationName={organizationName}
+              templates={pdfTemplates}
+              loading={pdfTemplatesLoading}
+              selectedByKey={selectedTemplateByKey}
+              fillByKey={fillByKey}
+              onSelectTemplate={handleSelectSampleTemplate}
+              onFillChange={handleSampleFillChange}
+            />
+          )}
+
           <div className="flex flex-wrap items-center justify-end gap-3">
             <button
               type="button"
-              onClick={clearPatient}
+              onClick={() => {
+                if (kassaMode === "patient") {
+                  clearPatient();
+                  return;
+                }
+                setOrganizationName("");
+                resetOrderForm();
+              }}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
             >
               Bekor qilish
@@ -1656,7 +1868,12 @@ export function OrderPage({
               <button
                 type="button"
                 onClick={() => void openReceipt()}
-                disabled={receiptLoading || submitting || items.length === 0}
+                disabled={
+                  receiptLoading
+                  || submitting
+                  || items.length === 0
+                  || (kassaMode === "organization" && !organizationName.trim())
+                }
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {receiptLoading ? (
@@ -1670,7 +1887,13 @@ export function OrderPage({
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={submitting || receiptLoading || items.length === 0 || !paymentMethod}
+              disabled={
+                submitting
+                || receiptLoading
+                || items.length === 0
+                || !paymentMethod
+                || (kassaMode === "organization" && !organizationName.trim())
+              }
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ background: primaryColor }}
             >
@@ -1706,10 +1929,15 @@ export function OrderPage({
         />
       )}
 
-      {receiptOpen && patient && paymentMethod && (
+      {receiptOpen && paymentMethod && (kassaMode === "organization" || patient) && (
         <ReceiptModal
           primaryColor={primaryColor}
-          patient={patient}
+          patient={
+            kassaMode === "organization"
+              ? { first_name: "", last_name: organizationName.trim() }
+              : patient!
+          }
+          nameLabel={kassaMode === "organization" ? "Tashkilot" : "Bemor"}
           items={items}
           paymentMethod={paymentMethod}
           paidAmount={paidAmount}

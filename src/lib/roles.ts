@@ -4,6 +4,7 @@ export type AppRole =
   | "admin"
   | "director"
   | "kassir"
+  | "kassir_sangig"
   | "lab_director"
   | "lab_asistant";
 
@@ -46,6 +47,7 @@ const ROLE_NAV: Record<AppRole, readonly NavId[]> = {
     // "results",
   ],
   kassir: ["patients", "kassa", "results", "ai-demo"],
+  kassir_sangig: ["dashboard", "results"],
   lab_director: ["dashboard", "orders", "results", "ai-demo"],
   lab_asistant: ["dashboard", "results", "ai-demo"],
 };
@@ -58,6 +60,9 @@ const ROLE_ALIASES: Record<string, AppRole> = {
   director: "director",
   kassir: "kassir",
   cashier: "kassir",
+  kassir_sangig: "kassir_sangig",
+  kassirsangig: "kassir_sangig",
+  cashier_sangig: "kassir_sangig",
   lab_director: "lab_director",
   labdirector: "lab_director",
   lab_asistant: "lab_asistant",
