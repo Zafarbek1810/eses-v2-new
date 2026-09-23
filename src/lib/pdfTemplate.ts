@@ -815,12 +815,25 @@ export function removeTemplatePage(
 }
 
 const MIN_TABLE_COLS = 1;
-const MAX_TABLE_COLS = 12;
 const MIN_HEADER_ROWS = 1;
 const MAX_HEADER_ROWS = 6;
 const MIN_BODY_ROWS = 0;
 const MAX_BODY_ROWS = 80;
+/** Comfortable floor while every column can still fit in 100%. */
 const MIN_COL_WIDTH_PCT = 5;
+
+function clampCols(n: number) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return MIN_TABLE_COLS;
+  return Math.max(MIN_TABLE_COLS, v);
+}
+
+/** Smallest % a column may take so the whole row still sums to 100%. */
+function minTableColWidthPct(cols: number): number {
+  const c = Math.max(1, cols);
+  if (c * MIN_COL_WIDTH_PCT <= 100) return MIN_COL_WIDTH_PCT;
+  return Math.max(0.01, Math.round((100 / c) * 0.4 * 100) / 100);
+}
 
 export function emptyTableCell(
   text = "",
@@ -859,11 +872,12 @@ export function resizeAdjacentColWidths(
   const next = [...widths];
   const rightCol = leftCol + 1;
   if (leftCol < 0 || rightCol >= next.length) return next;
+  const floor = minTableColWidthPct(next.length);
   const left = next[leftCol];
   const right = next[rightCol];
   const pair = left + right;
   let newLeft = left + deltaPct;
-  newLeft = Math.max(MIN_COL_WIDTH_PCT, Math.min(pair - MIN_COL_WIDTH_PCT, newLeft));
+  newLeft = Math.max(floor, Math.min(pair - floor, newLeft));
   next[leftCol] = Math.round(newLeft * 100) / 100;
   next[rightCol] = Math.round((pair - newLeft) * 100) / 100;
   return next;
@@ -874,9 +888,10 @@ export function setColWidthAt(data: PdfTableData, col: number, pct: number): Pdf
   if (col < 0 || col >= prev.cols) return prev;
   const widths = [...prev.colWidths];
   const others = widths.reduce((s, w, i) => (i === col ? s : s + w), 0);
+  const floor = minTableColWidthPct(prev.cols);
   const clamped = Math.max(
-    MIN_COL_WIDTH_PCT,
-    Math.min(100 - MIN_COL_WIDTH_PCT * (prev.cols - 1), Number(pct) || MIN_COL_WIDTH_PCT),
+    floor,
+    Math.min(100 - floor * (prev.cols - 1), Number(pct) || floor),
   );
   widths[col] = clamped;
   // Scale remaining columns to fill 100 - clamped
@@ -912,7 +927,7 @@ function makeCellGrid(rows: number, cols: number, seed?: PdfTableCell[][]): PdfT
 }
 
 export function createEmptyTableData(cols = 4, headerRows = 1, bodyRows = 3): PdfTableData {
-  const c = clampInt(cols, MIN_TABLE_COLS, MAX_TABLE_COLS);
+  const c = clampCols(cols);
   const hr = clampInt(headerRows, MIN_HEADER_ROWS, MAX_HEADER_ROWS);
   const br = clampInt(bodyRows, MIN_BODY_ROWS, MAX_BODY_ROWS);
   const headerCells: PdfTableCell[][] = [];
@@ -1039,11 +1054,7 @@ export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
   if (!headerCells || headerCells.length === 0) return createEmptyTableData();
 
   const hr = clampInt(headerRows || headerCells.length, MIN_HEADER_ROWS, MAX_HEADER_ROWS);
-  const c = clampInt(
-    cols || Math.max(...headerCells.map(r => r?.length ?? 0), 1),
-    MIN_TABLE_COLS,
-    MAX_TABLE_COLS,
-  );
+  const c = clampCols(cols || Math.max(...headerCells.map(r => r?.length ?? 0), 1));
 
   const outHeader = makeCellGrid(hr, c, headerCells);
 
@@ -1068,7 +1079,7 @@ export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
 
 export function resizeTableCols(data: PdfTableData, nextCols: number): PdfTableData {
   const prev = normalizeTableData(data);
-  const cols = clampInt(nextCols, MIN_TABLE_COLS, MAX_TABLE_COLS);
+  const cols = clampCols(nextCols);
   const headerCells = makeCellGrid(prev.headerRows, cols, prev.headerCells);
   const bodyCells = makeCellGrid(prev.bodyRows, cols, prev.bodyCells);
   const colWidths =

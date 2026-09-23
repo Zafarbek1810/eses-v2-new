@@ -2027,16 +2027,19 @@ function FreeTableBuilder({
         <label className="block text-[11px] font-semibold text-muted-foreground mb-1.5">
           Ustun kengliklari (%)
         </label>
-        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(data.cols, 4)}, minmax(0, 1fr))` }}>
+        <div
+          className="grid gap-1.5 max-h-48 overflow-y-auto pr-0.5"
+          style={{ gridTemplateColumns: `repeat(${Math.min(data.cols, 4)}, minmax(0, 1fr))` }}
+        >
           {data.colWidths.map((w, i) => (
             <label key={i} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <span className="shrink-0 w-4">{i + 1}</span>
+              <span className="shrink-0 w-5 tabular-nums">{i + 1}</span>
               <input
                 type="number"
-                min={5}
-                max={90}
-                step={1}
-                value={Math.round(w)}
+                min={0.1}
+                max={95}
+                step={0.1}
+                value={Math.round(w * 10) / 10}
                 onChange={e => {
                   const pct = Number(e.target.value);
                   if (!Number.isFinite(pct)) return;
