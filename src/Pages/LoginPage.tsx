@@ -96,7 +96,10 @@ export const LoginPage = ({ onLogin }: { onLogin: (user: AuthUser) => void }) =>
       const user = await resolveUserWithRole(baseUser);
       setStoredUser(user);
       const companyId = user.company?.id ?? data.user.company?.id;
-      void fetchPdfTemplatesFromApi(companyId).catch(() => {
+      void fetchPdfTemplatesFromApi(companyId, {
+        syncFromGlobal: false,
+        hydrateImages: false,
+      }).catch(() => {
         /* shablonlar keyinroq yuklanadi */
       });
       onLogin(user);

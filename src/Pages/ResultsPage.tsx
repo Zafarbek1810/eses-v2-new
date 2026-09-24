@@ -270,6 +270,8 @@ function templateMatchesId(template: PdfTemplate, preferredId?: string | null) {
   return false;
 }
 
+let laboratoriesCache: Awaited<ReturnType<typeof getAllLaboratories>> | null = null;
+
 function analysisIdsFromLab(lab: { analysis?: unknown[] } | null | undefined): number[] {
   const ids: number[] = [];
   for (const raw of lab?.analysis ?? []) {
@@ -300,7 +302,8 @@ async function templatesForAnalysisRow(
 
   if (row.laboratoryId == null) return [];
   try {
-    const labs = await getAllLaboratories();
+    if (!laboratoriesCache) laboratoriesCache = await getAllLaboratories();
+    const labs = laboratoriesCache;
     const lab = (Array.isArray(labs) ? labs : []).find(item => item.id === row.laboratoryId);
     const ids = new Set(analysisIdsFromLab(lab));
     if (ids.size === 0) return [];
@@ -541,14 +544,23 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setPage(p);
   };
 
-  const loadResultTemplates = async () => {
-    if (templatesCacheRef.current) return templatesCacheRef.current;
+  const fetchResultTemplates = async () => {
     const list = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined, {
       syncFromGlobal: false,
       hydrateImages: false,
     }).catch(() => loadPdfTemplates());
     templatesCacheRef.current = list;
     return list;
+  };
+
+  const loadResultTemplates = async (row: OrderAnalysisRow) => {
+    const cached = templatesCacheRef.current ?? loadPdfTemplates();
+    if (cached.length > 0) {
+      templatesCacheRef.current = cached;
+      const matched = await templatesForAnalysisRow(row, cached);
+      if (matched.length > 0) return cached;
+    }
+    return fetchResultTemplates();
   };
 
   const openRow = async (row: OrderAnalysisRow) => {
@@ -577,7 +589,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       })();
 
       const [allTemplates, order, company, resultPack] = await Promise.all([
-        loadResultTemplates(),
+        loadResultTemplates(row),
         cachedOrder?.patient
           ? Promise.resolve(cachedOrder)
           : getOrderById(row.orderId).catch(() => cachedOrder),
@@ -659,7 +671,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         return;
       }
 
-      const templates = await loadResultTemplates().catch(() => [] as PdfTemplate[]);
+      const templates = templatesCacheRef.current ?? await fetchResultTemplates();
       const orderItems = (order.items ?? []) as OrderItem[];
       const scope = restrictToOwnLab ? labScopeRef.current : null;
       const cartItems: ReceiptCartItem[] = orderItems
