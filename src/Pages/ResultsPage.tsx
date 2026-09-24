@@ -23,7 +23,6 @@ import {
   findResultByOrderId,
   getAllResults,
   getResultById,
-  getResultByIdTwo,
   getResultItems,
   GRID_TEMPLATE_ID_KEY,
   GRID_OVERLAYS_KEY,
@@ -59,7 +58,6 @@ import {
   getPdfPreviewHeight,
   getPdfPreviewWidth,
   hydratePdfTemplateImages,
-  hydratePdfTemplatesImages,
   listPdfTemplatesForAnalysis,
   loadPdfTemplates,
   normalizeTableData,
@@ -283,6 +281,11 @@ function analysisIdsFromLab(lab: { analysis?: unknown[] } | null | undefined): n
   return ids;
 }
 
+function templatesNamed(list: PdfTemplate[], name: string): PdfTemplate[] {
+  if (!name) return [];
+  return list.filter(template => (template.analysisName || "").trim().toLowerCase() === name);
+}
+
 /** Shu analiz (va shu laboratoriya) ga tegishli PDF shablonlar. Boshqa analiz shabloniga tushmaydi. */
 async function templatesForAnalysisRow(
   row: OrderAnalysisRow,
@@ -292,25 +295,22 @@ async function templatesForAnalysisRow(
   if (exact.length > 0) return exact;
 
   const name = row.analysisName.trim().toLowerCase();
-  let pool = all;
-  if (row.laboratoryId != null) {
-    try {
-      const labs = await getAllLaboratories();
-      const lab = (Array.isArray(labs) ? labs : []).find(item => item.id === row.laboratoryId);
-      const ids = new Set(analysisIdsFromLab(lab));
-      if (ids.size > 0) {
-        pool = all.filter(template => {
-          const id = resolvePdfTemplateAnalysisId(template);
-          return id != null && ids.has(id);
-        });
-      }
-    } catch {
-      /* laboratoriya ro'yxati kelmasa nom bo'yicha qidiramiz */
-    }
-  }
+  const byName = templatesNamed(all, name);
+  if (byName.length > 0) return byName;
 
-  if (!name) return [];
-  return pool.filter(template => (template.analysisName || "").trim().toLowerCase() === name);
+  if (row.laboratoryId == null) return [];
+  try {
+    const labs = await getAllLaboratories();
+    const lab = (Array.isArray(labs) ? labs : []).find(item => item.id === row.laboratoryId);
+    const ids = new Set(analysisIdsFromLab(lab));
+    if (ids.size === 0) return [];
+    return all.filter(template => {
+      const id = resolvePdfTemplateAnalysisId(template);
+      return id != null && ids.has(id);
+    });
+  } catch {
+    return [];
+  }
 }
 
 function pickTemplateForAnalysis(
@@ -319,8 +319,7 @@ function pickTemplateForAnalysis(
 ): PdfTemplate | null {
   const preferred = preferredId ? list.find(template => templateMatchesId(template, preferredId)) : null;
   if (preferred) return preferred;
-  if (list.length === 1) return list[0];
-  return null;
+  return list[0] ?? null;
 }
 
 function seedFillFromTemplate(
@@ -385,6 +384,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [pdfZoom, setPdfZoom] = useState(PDF_ZOOM_DEFAULT);
   const pdfRef = useRef<HTMLDivElement>(null);
   const savedFillRef = useRef<Record<string, string>>({});
+  const templatesCacheRef = useRef<PdfTemplate[] | null>(null);
   const labScopeRef = useRef<LabScope | null>(null);
   const [labScopeReady, setLabScopeReady] = useState(!restrictToOwnLab);
 
@@ -541,62 +541,53 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setPage(p);
   };
 
+  const loadResultTemplates = async () => {
+    if (templatesCacheRef.current) return templatesCacheRef.current;
+    const list = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined, {
+      syncFromGlobal: false,
+      hydrateImages: false,
+    }).catch(() => loadPdfTemplates());
+    templatesCacheRef.current = list;
+    return list;
+  };
+
   const openRow = async (row: OrderAnalysisRow) => {
     setOpening(true);
     setSelected(row);
     setPdfZoom(PDF_ZOOM_DEFAULT);
     try {
-      const allTemplates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(
-        async () => hydratePdfTemplatesImages(loadPdfTemplates()),
-      );
-      let analysisTemplates = await templatesForAnalysisRow(row, allTemplates);
-
-      let order: Order | null = null;
-      try {
-        order = await getOrderById(row.orderId);
-      } catch {
-        /* optional */
-      }
-
-      const company = await resolveStoredCompanyDynamic();
-
-      let resultRec: ResultRecord | null = null;
-      let savedItems: ReturnType<typeof getResultItems> = [];
+      const cachedOrder = orders.find(o => o.id === row.orderId) ?? null;
       const cachedRec = findResultByOrderId(resultsCache, row.orderId);
+      const cachedItems = cachedRec ? getResultItems(cachedRec) : [];
+      const cachedFill = decodeGridFillFromItems(cachedItems, row.analysisId);
+      const cacheHasGrid = Object.keys(cachedFill).length > 0;
 
-      if (row.resultId) {
-        try {
-          resultRec = await getResultById(row.resultId);
-          savedItems = getResultItems(resultRec);
-        } catch {
-          resultRec = cachedRec;
-          savedItems = resultRec ? getResultItems(resultRec) : [];
-        }
-      } else {
-        resultRec = cachedRec;
-        savedItems = resultRec ? getResultItems(resultRec) : [];
-      }
-
-      // getby sometimes omits nested items — fall back to cache, then public order lookup
-      if (savedItems.length === 0 && cachedRec) {
-        const cachedItems = getResultItems(cachedRec);
-        if (cachedItems.length > 0) {
-          savedItems = cachedItems;
-          if (!resultRec) resultRec = cachedRec;
-        }
-      }
-      if (savedItems.length === 0) {
-        try {
-          const byOrder = await getResultByIdTwo(row.orderId);
-          const byOrderItems = getResultItems(byOrder);
-          if (byOrderItems.length > 0) {
-            savedItems = byOrderItems;
-            resultRec = byOrder;
+      const resultPromise = (async () => {
+        if (cacheHasGrid) return { rec: cachedRec, items: cachedItems };
+        if (row.resultId) {
+          try {
+            const rec = await getResultById(row.resultId);
+            const items = getResultItems(rec);
+            if (items.length > 0) return { rec, items };
+          } catch {
+            /* ro'yxatdagi natija yetarli */
           }
-        } catch {
-          /* yozuvlar boshqa joyda bo'lmasa bo'sh qoladi */
         }
-      }
+        return { rec: cachedRec, items: cachedItems };
+      })();
+
+      const [allTemplates, order, company, resultPack] = await Promise.all([
+        loadResultTemplates(),
+        cachedOrder?.patient
+          ? Promise.resolve(cachedOrder)
+          : getOrderById(row.orderId).catch(() => cachedOrder),
+        resolveStoredCompanyDynamic(),
+        resultPromise,
+      ]);
+
+      const resultRec = resultPack.rec;
+      const savedItems = resultPack.items;
+      let analysisTemplates = await templatesForAnalysisRow(row, allTemplates);
 
       const saved = decodeGridFillFromItems(savedItems, row.analysisId);
       savedFillRef.current = saved;
@@ -656,17 +647,19 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setQrLoadingKey(row.key);
     try {
       let order = orders.find(o => o.id === row.orderId) ?? null;
-      try {
-        order = await getOrderById(row.orderId);
-      } catch {
-        /* list dagi order yetarli bo'lishi mumkin */
+      if (!order?.items?.length) {
+        try {
+          order = await getOrderById(row.orderId);
+        } catch {
+          /* list dagi order yetarli bo'lishi mumkin */
+        }
       }
       if (!order) {
         pushToast("Buyurtma topilmadi", "error");
         return;
       }
 
-      const templates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() => [] as PdfTemplate[]);
+      const templates = await loadResultTemplates().catch(() => [] as PdfTemplate[]);
       const orderItems = (order.items ?? []) as OrderItem[];
       const scope = restrictToOwnLab ? labScopeRef.current : null;
       const cartItems: ReceiptCartItem[] = orderItems
@@ -748,13 +741,19 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const zoomReset = () => setPdfZoom(PDF_ZOOM_DEFAULT);
 
   const handleTemplateChange = (templateId: string) => {
-    if (!selected || !canEditResults) return;
+    if (!selected) return;
     const base = availableTemplates.find(t => t.id === templateId);
     if (!base) return;
-    const next = bindTemplateToAnalysis(base, selected.analysisId, selected.analysisName);
-    setTemplate(next);
-    setPdfZoom(PDF_ZOOM_DEFAULT);
-    setFillValues(fillsForTemplate(next, savedFillRef.current, availableTemplates.length));
+    const analysisId = selected.analysisId;
+    const analysisName = selected.analysisName;
+    const apply = (source: PdfTemplate) => {
+      const next = bindTemplateToAnalysis(source, analysisId, analysisName);
+      setTemplate(next);
+      setPdfZoom(PDF_ZOOM_DEFAULT);
+      setFillValues(fillsForTemplate(next, savedFillRef.current, availableTemplates.length));
+    };
+    apply(base);
+    void hydratePdfTemplateImages(base).then(apply).catch(() => undefined);
   };
 
   const updateFill = (key: string, value: string) => {
@@ -1013,7 +1012,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           <div className="flex items-center justify-center py-16 text-muted-foreground gap-2 text-[13px]">
             <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
           </div>
-        ) : availableTemplates.length > 0 && canEditResults ? (
+        ) : availableTemplates.length > 1 ? (
           <div className="bg-card rounded-2xl border border-border shadow-sm p-4 space-y-3">
             <div>
               <h3 className="text-[13px] font-semibold text-foreground">PDF shablonlar</h3>

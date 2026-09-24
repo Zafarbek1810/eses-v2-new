@@ -320,6 +320,8 @@ function emptyCompanyDynamicFields(): PdfCompanyDynamicFields {
   };
 }
 
+const companyDynamicCache = new Map<number, PdfCompanyDynamicFields>();
+
 /** localStorage `ses_company_id` → `/company/getby/:id` (nom, viloyat, tuman, manzil, telefon) */
 export async function resolveStoredCompanyDynamic(
   companyIdOverride?: number | null,
@@ -336,10 +338,13 @@ export async function resolveStoredCompanyDynamic(
   const companyId = companyIdOverride ?? getStoredCompanyId();
   if (companyId == null || companyId <= 0) return fallback;
 
+  const cached = companyDynamicCache.get(companyId);
+  if (cached) return cached;
+
   try {
     const company = unwrapCompany(await getCompanyById(companyId));
     const fromApi = companyFieldsFromRecord(company);
-    return {
+    const resolved: PdfCompanyDynamicFields = {
       companyName: fromApi.companyName || fallback.companyName,
       companyRegion: fromApi.companyRegion || fallback.companyRegion,
       companyDistrict: fromApi.companyDistrict || fallback.companyDistrict,
@@ -349,6 +354,8 @@ export async function resolveStoredCompanyDynamic(
       companyWebsite: fromApi.companyWebsite || fallback.companyWebsite,
       companyTelegram: fromApi.companyTelegram || fallback.companyTelegram,
     };
+    companyDynamicCache.set(companyId, resolved);
+    return resolved;
   } catch {
     return fallback;
   }
@@ -2035,14 +2042,25 @@ export function onlineStorageRecordToPdfTemplate(
   };
 }
 
-export async function fetchPdfTemplatesFromApi(companyId?: number): Promise<PdfTemplate[]> {
-  if (companyId != null && companyId > 0) {
+export async function fetchPdfTemplatesFromApi(
+  companyId?: number,
+  options?: {
+    /** Yo'q analizlarga global shablonni ko'chirish. Natija ochishda kerak emas. */
+    syncFromGlobal?: boolean;
+    /** Har bir shablon uchun alohida getby. Bitta PDF uchun kerak emas. */
+    hydrateImages?: boolean;
+  },
+): Promise<PdfTemplate[]> {
+  const syncFromGlobal = options?.syncFromGlobal !== false;
+  const hydrateImages = options?.hydrateImages !== false;
+  if (syncFromGlobal && companyId != null && companyId > 0) {
     await ensureCompanyPdfTemplatesFromGlobal(companyId).catch(() => 0);
   }
   const records = await getAllOnlineStorages(companyId);
   const parsed = records
     .map(onlineStorageRecordToPdfTemplate)
     .filter((t): t is PdfTemplate => t != null);
+  if (!hydrateImages) return parsed;
   const templates = await hydratePdfTemplatesImages(parsed);
 
   // Cache ixtiyoriy — quota to'lsa ham xotiradagi ro'yxat qaytadi
