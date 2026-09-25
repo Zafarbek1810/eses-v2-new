@@ -16,7 +16,7 @@ import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
 import {
-  fetchPdfTemplatesFromApi,
+  fetchPdfTemplatesForAnalyses,
   listPdfTemplatesForAnalysis,
   seedDynamicFillFromTemplate,
   type PdfTemplate,
@@ -811,13 +811,28 @@ export function OrderPage({
     return () => { cancelled = true; };
   }, []);
 
+  const sampleAnalysisKey = items.map(item => item.analysis_id).join(",");
+
   useEffect(() => {
     if (kassaMode !== "organization") return;
+    const analysisIds = sampleAnalysisKey
+      .split(",")
+      .map(id => Number(id))
+      .filter(id => Number.isFinite(id) && id > 0);
+    if (analysisIds.length === 0) {
+      setPdfTemplates([]);
+      setPdfTemplatesLoading(false);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       setPdfTemplatesLoading(true);
       try {
-        const list = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined);
+        const list = await fetchPdfTemplatesForAnalyses(
+          analysisIds,
+          getStoredCompanyId() ?? undefined,
+          { hydrateImages: false },
+        );
         if (!cancelled) setPdfTemplates(Array.isArray(list) ? list : []);
       } catch {
         if (!cancelled) setPdfTemplates([]);
@@ -828,7 +843,7 @@ export function OrderPage({
     return () => {
       cancelled = true;
     };
-  }, [kassaMode]);
+  }, [kassaMode, sampleAnalysisKey]);
 
   const setPatientFilterField = <K extends keyof PatientFilterForm>(
     k: K,
@@ -1148,7 +1163,11 @@ export function OrderPage({
       const orderId = await persistOrder();
       if (orderId == null) return;
 
-      const templates = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() => []);
+      const templates = await fetchPdfTemplatesForAnalyses(
+        items.map(item => item.analysis_id),
+        getStoredCompanyId() ?? undefined,
+        { hydrateImages: false },
+      ).catch(() => pdfTemplates);
       setReceiptLinks(buildReceiptQrLinks(orderId, items, templates));
       setReceiptOpen(true);
     } catch (err) {

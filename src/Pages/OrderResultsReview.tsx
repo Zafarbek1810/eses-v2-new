@@ -41,14 +41,12 @@ import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
   bodyCellKey,
-  fetchPdfTemplatesFromApi,
+  fetchPdfTemplatesForAnalyses,
   getPdfPreviewHeight,
   getPdfPreviewWidth,
   headerCellKey,
   hydratePdfTemplateImages,
-  hydratePdfTemplatesImages,
   isDynamicCell,
-  loadPdfTemplates,
   normalizeTableData,
   resolveStoredCompanyDynamic,
   type PdfDynamicContext,
@@ -193,13 +191,17 @@ export function OrderResultsReview({
     setLoading(true);
     setError(null);
     try {
-      const [orderData, results, templates] = await Promise.all([
+      const [orderData, results] = await Promise.all([
         getOrderById(orderId),
         getAllResults().catch(() => [] as ResultRecord[]),
-        fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined).catch(() =>
-          hydratePdfTemplatesImages(loadPdfTemplates()),
-        ),
       ]);
+      const analysisIds = ((orderData.items ?? []) as OrderItem[])
+        .map(item => resolveOrderItemAnalysisId(item))
+        .filter((id): id is number => id != null && id > 0);
+      const templates = await fetchPdfTemplatesForAnalyses(
+        analysisIds,
+        getStoredCompanyId() ?? undefined,
+      ).catch(() => [] as PdfTemplate[]);
 
       setOrder(orderData);
 

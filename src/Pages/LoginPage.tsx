@@ -12,10 +12,7 @@ import {
   type AuthUser,
 } from "@/api/auth";
 import { getUserById } from "@/api/user";
-import {
-  clearPdfTemplatesStorage,
-  fetchPdfTemplatesFromApi,
-} from "@/lib/pdfTemplate";
+import { clearPdfTemplatesStorage } from "@/lib/pdfTemplate";
 
 async function resolveUserWithRole(user: AuthUser): Promise<AuthUser> {
   if (user.role?.name) return user;
@@ -95,13 +92,6 @@ export const LoginPage = ({ onLogin }: { onLogin: (user: AuthUser) => void }) =>
       const { password: _pw, ...baseUser } = data.user;
       const user = await resolveUserWithRole(baseUser);
       setStoredUser(user);
-      const companyId = user.company?.id ?? data.user.company?.id;
-      void fetchPdfTemplatesFromApi(companyId, {
-        syncFromGlobal: false,
-        hydrateImages: false,
-      }).catch(() => {
-        /* shablonlar keyinroq yuklanadi */
-      });
       onLogin(user);
     } catch (err) {
       if (err instanceof ApiError) {

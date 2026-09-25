@@ -170,6 +170,31 @@ export async function getAllOnlineStorages(companyId?: number) {
   return normalizeList(raw);
 }
 
+/** Bitta analiz shablonlari. To'liq katalog (`getall`) o'rniga. */
+export async function getOnlineStoragesByAnalysis(
+  analysisId: number | string,
+  companyId?: number,
+) {
+  const id = String(analysisId).trim();
+  const raw = await apiRequest<unknown>(
+    `/onlinestorage/getbyanalysis/${encodeURIComponent(id)}${companyQuery(companyId)}`,
+    {
+      method: "GET",
+      fallbackError: "PDF shablonni yuklab bo'lmadi",
+    },
+  );
+  const list = normalizeList(raw);
+  if (list.length > 0) return list;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const obj = raw as Record<string, unknown>;
+  const nested = obj.data ?? obj.result ?? obj.onlinestorage ?? obj.onlineStorage;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return normalizeList([nested]);
+  }
+  if ("id" in obj || "text" in obj) return normalizeList([obj]);
+  return [];
+}
+
 export async function getOnlineStoragesFull(
   params: OnlineStorageFullParams = {},
 ): Promise<OnlineStorageFullResponse> {

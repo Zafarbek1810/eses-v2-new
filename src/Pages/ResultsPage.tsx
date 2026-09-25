@@ -54,12 +54,11 @@ import { downloadElementAsPdf, printElementAsPdf } from "@/lib/pdfExport";
 import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
-  fetchPdfTemplatesFromApi,
+  fetchPdfTemplatesForAnalyses,
   getPdfPreviewHeight,
   getPdfPreviewWidth,
   hydratePdfTemplateImages,
   listPdfTemplatesForAnalysis,
-  loadPdfTemplates,
   normalizeTableData,
   resolvePdfTemplateAnalysisId,
   resolveStoredCompanyDynamic,
@@ -544,23 +543,24 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setPage(p);
   };
 
-  const fetchResultTemplates = async () => {
-    const list = await fetchPdfTemplatesFromApi(getStoredCompanyId() ?? undefined, {
-      syncFromGlobal: false,
-      hydrateImages: false,
-    }).catch(() => loadPdfTemplates());
+  const fetchResultTemplates = async (analysisIds: number[]) => {
+    const companyId = getStoredCompanyId() ?? undefined;
+    const cached = templatesCacheRef.current ?? [];
+    const missing = analysisIds.filter(
+      id => !cached.some(template => resolvePdfTemplateAnalysisId(template) === id),
+    );
+    const fetched = missing.length > 0
+      ? await fetchPdfTemplatesForAnalyses(missing, companyId, { hydrateImages: false }).catch(
+        () => [] as PdfTemplate[],
+      )
+      : [];
+    const list = [...cached, ...fetched];
     templatesCacheRef.current = list;
     return list;
   };
 
   const loadResultTemplates = async (row: OrderAnalysisRow) => {
-    const cached = templatesCacheRef.current ?? loadPdfTemplates();
-    if (cached.length > 0) {
-      templatesCacheRef.current = cached;
-      const matched = await templatesForAnalysisRow(row, cached);
-      if (matched.length > 0) return cached;
-    }
-    return fetchResultTemplates();
+    return fetchResultTemplates([row.analysisId]);
   };
 
   const openRow = async (row: OrderAnalysisRow) => {
@@ -671,7 +671,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         return;
       }
 
-      const templates = templatesCacheRef.current ?? await fetchResultTemplates();
       const orderItems = (order.items ?? []) as OrderItem[];
       const scope = restrictToOwnLab ? labScopeRef.current : null;
       const cartItems: ReceiptCartItem[] = orderItems
@@ -706,6 +705,8 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               price: 0,
             },
           ];
+
+      const templates = await fetchResultTemplates(items.map(item => item.analysis_id));
 
       const totalBeforeDiscount =
         parseMoney(order.total_amount) || items.reduce((sum, i) => sum + i.price, 0);

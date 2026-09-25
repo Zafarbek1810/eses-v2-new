@@ -4,6 +4,7 @@ import {
   extractOnlineStorageId,
   getAllOnlineStorages,
   getOnlineStorageById,
+  getOnlineStoragesByAnalysis,
   resolveOnlineStorageAnalysisId,
   updateOnlineStorage,
   type OnlineStorage,
@@ -2084,6 +2085,42 @@ export async function fetchPdfTemplatesFromApi(
   }
 
   return templates;
+}
+
+/** Faqat berilgan analizlar shablonlari — `getall` siz. */
+export async function fetchPdfTemplatesForAnalyses(
+  analysisIds: number[],
+  companyId?: number,
+  options?: { hydrateImages?: boolean },
+): Promise<PdfTemplate[]> {
+  const ids = [...new Set(
+    analysisIds.map(id => Number(id)).filter(id => Number.isFinite(id) && id > 0),
+  )];
+  if (ids.length === 0) return [];
+
+  const hydrateImages = options?.hydrateImages !== false;
+  const batches = await Promise.all(
+    ids.map(id => getOnlineStoragesByAnalysis(id, companyId).catch(() => [] as OnlineStorage[])),
+  );
+
+  const seen = new Set<number>();
+  const parsed: PdfTemplate[] = [];
+  ids.forEach((analysisId, index) => {
+    for (const record of batches[index] ?? []) {
+      if (record.id != null && seen.has(record.id)) continue;
+      if (record.id != null) seen.add(record.id);
+      const tpl = onlineStorageRecordToPdfTemplate(record);
+      if (!tpl) continue;
+      parsed.push(
+        tpl.analysisId != null && tpl.analysisId > 0
+          ? tpl
+          : { ...tpl, analysisId },
+      );
+    }
+  });
+
+  if (!hydrateImages) return parsed;
+  return hydratePdfTemplatesImages(parsed);
 }
 
 export async function upsertPdfTemplateRemote(
