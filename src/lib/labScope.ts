@@ -66,8 +66,13 @@ export function orderItemInLabScope(
   item: OrderItem,
   scope: LabScope,
 ): boolean {
-  const labId = item.laboratory?.id;
-  if (labId != null && scope.labIds.has(labId)) return true;
+  const bag = item as OrderItem & {
+    laboratory_id?: number;
+    laboratoryId?: number;
+    lab_id?: number;
+  };
+  const labId = Number(item.laboratory?.id ?? bag.laboratory_id ?? bag.laboratoryId ?? bag.lab_id);
+  if (Number.isFinite(labId) && labId > 0 && scope.labIds.has(labId)) return true;
   const analysisId = resolveOrderItemAnalysisId(item);
   if (analysisId != null && scope.analysisIds.has(analysisId)) return true;
   return false;

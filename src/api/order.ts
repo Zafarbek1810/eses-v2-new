@@ -129,9 +129,65 @@ function extractOrderArray(raw: unknown): unknown[] {
   return [];
 }
 
+function normalizeOrderItem(raw: unknown): OrderItem | null {
+  const obj = asRecord(raw);
+  if (!obj) return null;
+  const id = Number(obj.id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+
+  const analysisRaw = obj.analysis ?? obj.Analysis;
+  const analysisObj = asRecord(analysisRaw);
+  const analysisId = Number(
+    analysisObj?.id ??
+      (typeof analysisRaw === "number" || typeof analysisRaw === "string" ? analysisRaw : NaN) ??
+      obj.analysis_id ??
+      obj.analysisId,
+  );
+  const analysis =
+    Number.isFinite(analysisId) && analysisId > 0
+      ? {
+          id: analysisId,
+          name: String(analysisObj?.name ?? obj.analysis_name ?? obj.analysisName ?? `Analiz #${analysisId}`),
+          shortname:
+            analysisObj?.shortname != null ? String(analysisObj.shortname) : undefined,
+        }
+      : null;
+
+  const labRaw = obj.laboratory ?? obj.lab ?? obj.Laboratory;
+  const labObj = asRecord(labRaw);
+  const labId = Number(
+    labObj?.id ??
+      (typeof labRaw === "number" || typeof labRaw === "string" ? labRaw : NaN) ??
+      obj.laboratory_id ??
+      obj.laboratoryId ??
+      obj.lab_id ??
+      obj.labId,
+  );
+  const laboratory =
+    Number.isFinite(labId) && labId > 0
+      ? {
+          id: labId,
+          name: String(labObj?.name ?? obj.laboratory_name ?? obj.laboratoryName ?? ""),
+        }
+      : null;
+
+  return {
+    ...(obj as OrderItem),
+    id,
+    analysis_id: analysis?.id,
+    analysisId: analysis?.id,
+    analysis,
+    laboratory,
+    status: String(obj.status ?? "pending"),
+  };
+}
+
 function normalizeOrderItems(raw: Record<string, unknown>): OrderItem[] | undefined {
   const list = raw.items ?? raw.orderItems ?? raw.order_items ?? raw.orderItem;
-  return Array.isArray(list) ? (list as OrderItem[]) : undefined;
+  if (!Array.isArray(list)) return undefined;
+  return list
+    .map(normalizeOrderItem)
+    .filter((item): item is OrderItem => item != null);
 }
 
 /** patient | sample | course — API camelCase / tashkilot aliaslarini ham qabul qiladi */
@@ -270,7 +326,12 @@ export async function getOrderById(id: number, options?: { auth?: boolean }) {
   const candidate = Array.isArray(inner) ? inner[0] : inner;
   const normalized = normalizeOrder(candidate) ?? normalizeOrder(raw);
   if (!normalized) throw new Error("Buyurtmani yuklab bo'lmadi");
-  return normalized;
+  if (normalized.items?.length) return normalized;
+  const envelopeItems =
+    normalizeOrderItems(asRecord(candidate) ?? {}) ??
+    normalizeOrderItems(asRecord(inner) ?? {}) ??
+    normalizeOrderItems(obj ?? {});
+  return envelopeItems?.length ? { ...normalized, items: envelopeItems } : normalized;
 }
 
 /** SMS / public link — token talab qilinmaydi */
