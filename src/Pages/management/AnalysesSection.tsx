@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus, Search, X, Edit3, Trash2, RefreshCw, TestTube2,
   CheckCircle, AlertCircle, Loader2, FlaskConical, FileText,
@@ -233,7 +233,8 @@ export function AnalysesSection({
   companyId?: number;
 }) {
   const scopedCompanyId = companyId ?? getStoredCompanyId() ?? undefined;
-  const [items, setItems] = useState<Analysis[]>([]);
+  const [catalog, setCatalog] = useState<Analysis[]>([]);
+  const [serverItems, setServerItems] = useState<Analysis[]>([]);
   const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -241,7 +242,7 @@ export function AnalysesSection({
   const [searchInput, setSearchInput] = useState("");
   const [labId, setLabId] = useState<number | "">("");
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [serverTotal, setServerTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [modal, setModal] = useState<
@@ -250,7 +251,24 @@ export function AnalysesSection({
     | { type: "delete"; item: Analysis }
     | null
   >(null);
+  const loadRequestId = useRef(0);
 
+  const filteredCatalog = useMemo(() => {
+    const query = searchInput.trim().toLowerCase();
+    return catalog.filter(item => {
+      if (labId !== "" && item.laboratory?.id !== labId) return false;
+      return !query
+        || item.name.toLowerCase().includes(query)
+        || item.shortname.toLowerCase().includes(query)
+        || (item.laboratory?.name ?? "").toLowerCase().includes(query);
+    });
+  }, [catalog, searchInput, labId]);
+
+  const localMode = scopedCompanyId != null;
+  const items = localMode
+    ? filteredCatalog.slice((page - 1) * PER_PAGE, page * PER_PAGE)
+    : serverItems;
+  const total = localMode ? filteredCatalog.length : serverTotal;
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   const pushToast = (text: string, type: "success" | "error" = "success") => {
@@ -262,6 +280,7 @@ export function AnalysesSection({
   const loadItems = async (opts?: { page?: number; search?: string }) => {
     const p = opts?.page ?? page;
     const s = opts?.search ?? search;
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     setError(null);
     try {
@@ -271,20 +290,14 @@ export function AnalysesSection({
           getAllLaboratories(scopedCompanyId),
           getCompanyById(scopedCompanyId),
         ]);
+        if (requestId !== loadRequestId.current) return;
         const scopedLabs = scopeLaboratories(allLabs, company, scopedCompanyId);
         const labIds = new Set(scopedLabs.map(lab => lab.id));
-        const query = s.trim().toLowerCase();
-        const scopedItems = allItems.filter(item => {
-          if (item.laboratory?.id != null && labIds.size > 0 && !labIds.has(item.laboratory.id)) return false;
-          return !query
-            || item.name.toLowerCase().includes(query)
-            || item.shortname.toLowerCase().includes(query);
-        });
-        const start = (p - 1) * PER_PAGE;
         setLaboratories(scopedLabs);
-        setItems(scopedItems.slice(start, start + PER_PAGE));
-        setTotal(scopedItems.length);
-        setPage(p);
+        setCatalog(allItems.filter(item => {
+          if (item.laboratory?.id == null) return true;
+          return labIds.size === 0 || labIds.has(item.laboratory.id);
+        }));
         return;
       }
 
@@ -294,15 +307,21 @@ export function AnalysesSection({
         search: s,
         companyId: scopedCompanyId,
       });
-      setItems(res.data);
-      setTotal(res.total);
+      if (requestId !== loadRequestId.current) return;
+      const filtered = labId === ""
+        ? res.data
+        : res.data.filter(item => item.laboratory?.id === labId);
+      setServerItems(filtered);
+      setServerTotal(labId === "" ? res.total : filtered.length);
       setPage(res.page);
     } catch (err) {
+      if (requestId !== loadRequestId.current) return;
       setError(err instanceof ApiError ? err.message : "Analizlarni yuklab bo'lmadi");
-      setItems([]);
-      setTotal(0);
+      setCatalog([]);
+      setServerItems([]);
+      setServerTotal(0);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   };
 
@@ -326,14 +345,23 @@ export function AnalysesSection({
   }, [scopedCompanyId]);
 
   useEffect(() => {
-    void loadItems();
+    if (scopedCompanyId != null) void loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, search, scopedCompanyId]);
+  }, [scopedCompanyId]);
+
+  useEffect(() => {
+    if (scopedCompanyId == null) void loadItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, search, labId]);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const applySearch = () => {
+    const next = searchInput.trim();
     setPage(1);
-    setLabId("");
-    setSearch(searchInput.trim());
+    setSearch(next);
   };
 
   const handleSave = async (form: AnalysisForm) => {
@@ -408,17 +436,22 @@ export function AnalysesSection({
             <input
               type="text"
               value={searchInput}
-              onChange={e => setSearchInput(e.target.value)}
+              onChange={e => {
+                const next = e.target.value;
+                setSearchInput(next);
+                setPage(1);
+                if (!localMode) setSearch(next.trim());
+              }}
               onKeyDown={e => { if (e.key === "Enter") applySearch(); }}
               placeholder="Nomi yoki qisqa nom bo'yicha qidirish…"
               className="bg-transparent text-[13px] text-foreground placeholder-muted-foreground focus:outline-none flex-1 min-w-0"
             />
             {searchInput && (
               <button
+                type="button"
                 onClick={() => {
                   setSearchInput("");
                   setSearch("");
-                  setLabId("");
                   setPage(1);
                 }}
                 className="text-muted-foreground hover:text-foreground"
@@ -434,17 +467,8 @@ export function AnalysesSection({
               const id = e.target.value ? Number(e.target.value) : "";
               setPage(1);
               setLabId(id);
-              if (id === "") {
-                setSearchInput("");
-                setSearch("");
-                return;
-              }
-              const lab = laboratories.find(l => l.id === id);
-              const name = lab?.name?.trim() ?? "";
-              setSearchInput(name);
-              setSearch(name);
             }}
-            className="bg-secondary border border-border rounded-xl px-3 py-2.5 text-[13px] text-foreground focus:outline-none max-w-[200px]"
+            className="bg-secondary border border-border rounded-xl px-3 py-2.5 text-[13px] text-foreground focus:outline-none max-w-[220px]"
           >
             <option value="">Barcha laboratoriyalar</option>
             {laboratories.map(l => (
