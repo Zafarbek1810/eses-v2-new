@@ -301,10 +301,10 @@ export async function getResultById(id: number, options?: { auth?: boolean }) {
  * SMS / public link — token talab qilinmaydi.
  * `:id` — buyurtma (order) id; natija shu order bo'yicha qaytadi.
  */
-export async function getResultByIdTwo(orderId: number) {
+export async function getResultByIdTwo(orderId: number, options?: { auth?: boolean }) {
   const raw = await apiRequest<unknown>(`/result/getbytwo/${orderId}`, {
     method: "GET",
-    auth: false,
+    auth: options?.auth ?? false,
     fallbackError: "Natijani yuklab bo'lmadi",
   });
   let normalized = normalizeResultRecord(raw);

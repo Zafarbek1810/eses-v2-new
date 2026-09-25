@@ -2087,6 +2087,12 @@ export async function fetchPdfTemplatesFromApi(
   return templates;
 }
 
+const templatesByAnalysisCache = new Map<string, PdfTemplate[]>();
+
+function templatesCacheKey(analysisId: number, companyId?: number) {
+  return `${companyId ?? 0}:${analysisId}`;
+}
+
 /** Faqat berilgan analizlar shablonlari — `getall` siz. */
 export async function fetchPdfTemplatesForAnalyses(
   analysisIds: number[],
@@ -2099,13 +2105,14 @@ export async function fetchPdfTemplatesForAnalyses(
   if (ids.length === 0) return [];
 
   const hydrateImages = options?.hydrateImages !== false;
+  const missing = ids.filter(id => !templatesByAnalysisCache.has(templatesCacheKey(id, companyId)));
   const batches = await Promise.all(
-    ids.map(id => getOnlineStoragesByAnalysis(id, companyId).catch(() => [] as OnlineStorage[])),
+    missing.map(id => getOnlineStoragesByAnalysis(id, companyId).catch(() => [] as OnlineStorage[])),
   );
 
-  const seen = new Set<number>();
-  const parsed: PdfTemplate[] = [];
-  ids.forEach((analysisId, index) => {
+  missing.forEach((analysisId, index) => {
+    const seen = new Set<number>();
+    const parsed: PdfTemplate[] = [];
     for (const record of batches[index] ?? []) {
       if (record.id != null && seen.has(record.id)) continue;
       if (record.id != null) seen.add(record.id);
@@ -2117,10 +2124,19 @@ export async function fetchPdfTemplatesForAnalyses(
           : { ...tpl, analysisId },
       );
     }
+    templatesByAnalysisCache.set(templatesCacheKey(analysisId, companyId), parsed);
   });
 
-  if (!hydrateImages) return parsed;
-  return hydratePdfTemplatesImages(parsed);
+  const list = ids.flatMap(id => templatesByAnalysisCache.get(templatesCacheKey(id, companyId)) ?? []);
+  if (!hydrateImages) return list;
+  const hydrated = await hydratePdfTemplatesImages(list);
+  ids.forEach(id => {
+    templatesByAnalysisCache.set(
+      templatesCacheKey(id, companyId),
+      hydrated.filter(tpl => resolvePdfTemplateAnalysisId(tpl) === id),
+    );
+  });
+  return hydrated;
 }
 
 export async function upsertPdfTemplateRemote(
@@ -2173,6 +2189,7 @@ export async function upsertPdfTemplateRemote(
     storageId,
     companyId: companyId && companyId > 0 ? companyId : next.companyId,
   };
+  templatesByAnalysisCache.delete(templatesCacheKey(analysisId, companyId ?? undefined));
   upsertPdfTemplate(saved);
   return saved;
 }
@@ -2185,6 +2202,7 @@ export async function deletePdfTemplateRemote(template: PdfTemplate): Promise<vo
   }
   deletePdfTemplate(template.id);
   if (analysisId != null) {
+    templatesByAnalysisCache.delete(templatesCacheKey(analysisId, companyId ?? undefined));
     await updateAnalysis(analysisId, {
       onlinestorage: false,
       ...(companyId != null && companyId > 0 ? { company_id: companyId } : {}),

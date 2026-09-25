@@ -144,6 +144,9 @@ function normalizeFullResponse(
   };
 }
 
+let laboratoriesListCache: Laboratory[] | null = null;
+let laboratoriesListInflight: Promise<Laboratory[]> | null = null;
+
 export async function getAllLaboratories(companyId?: number) {
   // Super admin boshqa tashkilotni ko'rganda /getall JWT company_id ni
   // query dan ustun qo'yadi. /getfull esa query company_id ni oladi.
@@ -160,10 +163,22 @@ export async function getAllLaboratories(companyId?: number) {
     return all;
   }
 
-  return apiRequest<unknown>("/laboratory/getall", {
-    method: "GET",
-    fallbackError: "Laboratoriyalarni yuklab bo'lmadi",
-  }).then(normalizeLaboratoryList);
+  if (laboratoriesListCache) return laboratoriesListCache;
+  if (!laboratoriesListInflight) {
+    laboratoriesListInflight = apiRequest<unknown>("/laboratory/getall", {
+      method: "GET",
+      fallbackError: "Laboratoriyalarni yuklab bo'lmadi",
+    })
+      .then(raw => {
+        const list = normalizeLaboratoryList(raw);
+        laboratoriesListCache = list;
+        return list;
+      })
+      .finally(() => {
+        laboratoriesListInflight = null;
+      });
+  }
+  return laboratoriesListInflight;
 }
 
 export async function getLaboratoriesFull(

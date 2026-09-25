@@ -17,8 +17,6 @@ import {
 } from "@/api/order";
 import {
   decodeGridFillFromItems,
-  findResultByOrderId,
-  getAllResults,
   getResultById,
   getResultItems,
   type ResultRecord,
@@ -46,6 +44,7 @@ import {
   getPdfPreviewWidth,
   headerCellKey,
   hydratePdfTemplateImages,
+  pdfTemplateNeedsImageHydration,
   isDynamicCell,
   normalizeTableData,
   resolveStoredCompanyDynamic,
@@ -142,6 +141,19 @@ function seedFillFromTemplate(
   return next;
 }
 
+function resultFromOrder(order: Order): ResultRecord | null {
+  const bag = order as Record<string, unknown>;
+  const embedded = bag.result ?? bag.results;
+  if (Array.isArray(embedded)) {
+    const withItems = embedded.find(
+      entry => entry && typeof entry === "object" && getResultItems(entry as ResultRecord).length > 0,
+    );
+    return (withItems as ResultRecord | undefined) ?? (embedded[0] as ResultRecord | undefined) ?? null;
+  }
+  if (embedded && typeof embedded === "object") return embedded as ResultRecord;
+  return null;
+}
+
 function statusBadgeClass(status: string) {
   switch (status) {
     case "completed":
@@ -191,69 +203,75 @@ export function OrderResultsReview({
     setLoading(true);
     setError(null);
     try {
-      const [orderData, results] = await Promise.all([
-        getOrderById(orderId),
-        getAllResults().catch(() => [] as ResultRecord[]),
-      ]);
+      const orderData = await getOrderById(orderId);
       const analysisIds = ((orderData.items ?? []) as OrderItem[])
         .map(item => resolveOrderItemAnalysisId(item))
         .filter((id): id is number => id != null && id > 0);
-      const templates = await fetchPdfTemplatesForAnalyses(
-        analysisIds,
-        getStoredCompanyId() ?? undefined,
-      ).catch(() => [] as PdfTemplate[]);
+      const companyId = getStoredCompanyId() ?? undefined;
+      const userDocEarly = getStoredUser();
+      const roleEarly = normalizeRoleName(userDocEarly?.role?.name);
+      const restrictEarly = roleEarly === "lab_director" || roleEarly === "lab_asistant";
+
+      const [templates, company, labs] = await Promise.all([
+        fetchPdfTemplatesForAnalyses(analysisIds, companyId, { hydrateImages: false }).catch(
+          () => [] as PdfTemplate[],
+        ),
+        resolveStoredCompanyDynamic(),
+        restrictEarly && userDocEarly?.id
+          ? getAllLaboratories().catch(() => [] as Awaited<ReturnType<typeof getAllLaboratories>>)
+          : Promise.resolve([] as Awaited<ReturnType<typeof getAllLaboratories>>),
+      ]);
 
       setOrder(orderData);
 
-      let resultRec = findResultByOrderId(results, orderId);
-      if (resultRec?.id) {
+      let resultRec = resultFromOrder(orderData);
+      if (resultRec?.id && getResultItems(resultRec).length === 0) {
         try {
           const full = await getResultById(resultRec.id);
           if (full) resultRec = full;
         } catch {
-          /* keep list result */
+          /* getbytwo dagi yozuv yetarli */
         }
       }
 
       const savedItems = getResultItems(resultRec);
-      const userDoc = getStoredUser();
-      const shortName = userDoc
-        ? `${(userDoc.username || "").charAt(0).toUpperCase()}.${userDoc.surname || ""}`
+      const shortName = userDocEarly
+        ? `${(userDocEarly.username || "").charAt(0).toUpperCase()}.${userDocEarly.surname || ""}`
             .replace(/^\./, "")
             .replace(/\.$/, "") || null
         : null;
-      const role = normalizeRoleName(userDoc?.role?.name);
-      const isAssistant = role === "lab_asistant";
-      const restrictToOwnLab = role === "lab_director" || role === "lab_asistant";
-      const company = await resolveStoredCompanyDynamic();
+      const isAssistant = roleEarly === "lab_asistant";
 
       let labScope: LabScope | null = null;
-      if (restrictToOwnLab && userDoc?.id) {
-        try {
-          const labs = await getAllLaboratories();
-          labScope = resolveUserLabScope(Array.isArray(labs) ? labs : [], userDoc.id);
-        } catch {
-          labScope = { labIds: new Set(), analysisIds: new Set() };
-        }
+      if (restrictEarly && userDocEarly?.id) {
+        labScope = resolveUserLabScope(Array.isArray(labs) ? labs : [], userDocEarly.id);
       }
 
       const orderItems = labScope
         ? filterOrderItemsByLabScope(orderData.items as OrderItem[] | undefined, labScope)
         : ((orderData.items ?? []) as OrderItem[]);
 
-      const nextViews: AnalysisPdfView[] = [];
-      for (const item of orderItems) {
+      const prepared = orderItems.flatMap(item => {
         const analysisId = resolveOrderItemAnalysisId(item);
-        if (!analysisId) continue;
+        if (!analysisId) return [];
         const analysisName = item.analysis?.name ?? `Analiz #${analysisId}`;
         const laboratoryName = item.laboratory?.name ?? "—";
-        const resolved = resolveTemplateForAnalysis(analysisId, analysisName, templates);
+        return [{ item, analysisId, analysisName, laboratoryName }];
+      });
+      const hydrated = await Promise.all(
+        prepared.map(async row => {
+          const resolved = resolveTemplateForAnalysis(row.analysisId, row.analysisName, templates);
+          if (!resolved || !pdfTemplateNeedsImageHydration(resolved)) return resolved;
+          return hydratePdfTemplateImages(resolved);
+        }),
+      );
+
+      const nextViews: AnalysisPdfView[] = [];
+      prepared.forEach((row, index) => {
+        const { item, analysisId, analysisName, laboratoryName } = row;
+        const resolved = hydrated[index];
         const tpl = resolved
-          ? bindTemplateToAnalysis(
-              await hydratePdfTemplateImages(resolved),
-              analysisId,
-              analysisName,
-            )
+          ? bindTemplateToAnalysis(resolved, analysisId, analysisName)
           : null;
         const saved = decodeGridFillFromItems(savedItems, analysisId);
         const hasSavedValues = Object.values(saved).some(v => String(v ?? "").trim() !== "");
@@ -291,7 +309,7 @@ export function OrderResultsReview({
             companyTelegram: company.companyTelegram,
           },
         });
-      }
+      });
 
       setViews(nextViews);
       setActiveKey(nextViews[0]?.key ?? null);
