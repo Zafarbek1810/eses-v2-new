@@ -20,6 +20,7 @@ import {
   DYNAMIC_FIELDS,
   PDF_CANVAS_FONT_CLASS,
   PDF_FONT_FAMILY,
+  PDF_LINE_HEIGHTS,
   PDF_MAX_PAGES,
   PDF_PAGE_GAP_PREVIEW,
   addTemplatePage,
@@ -44,6 +45,7 @@ import {
   loadPdfTemplates,
   mergeBodySelection,
   mergeHeaderSelection,
+  MIN_TABLE_ROW_PT,
   nextCellRotate,
   normalizeCellRotate,
   normalizeSelection,
@@ -53,16 +55,19 @@ import {
   resizeBodyRows,
   resizeHeaderRows,
   resizeTableCols,
+  resolvePdfLineHeight,
   resolvePdfTemplateAnalysisId,
   setActiveTemplateId,
   setColWidthAt,
+  setRowHeightAt,
   setTemplatePageOrientation,
-  tableHeightForRows,
+  tableHeightForData,
   unmergeBodySelection,
   unmergeHeaderSelection,
   updateBodyCell,
   updateColWidths,
   updateHeaderCell,
+  updateRowHeights,
   upsertPdfTemplateGlobal,
   upsertPdfTemplateRemote,
   type PdfCellRotate,
@@ -913,7 +918,7 @@ export function PdfTemplateSection({
     const td = normalizeTableData(tableData);
     updateElement(selected.id, {
       tableData: td,
-      height: tableHeightForRows(td.headerRows, td.bodyRows),
+      height: tableHeightForData(td),
     });
   };
 
@@ -1218,6 +1223,30 @@ export function PdfTemplateSection({
                         className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
                       />
                     </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                        Qator oralig&apos;i
+                      </label>
+                      <div className="grid grid-cols-5 gap-1">
+                        {PDF_LINE_HEIGHTS.map(h => {
+                          const on = selected.style?.lineHeight === h;
+                          return (
+                            <button
+                              key={h}
+                              type="button"
+                              onClick={() => updateStyle(selected.id, { lineHeight: h })}
+                              className={`py-1.5 rounded-lg border text-[11px] font-semibold tabular-nums transition-colors ${
+                                on
+                                  ? "border-[var(--primary)] text-[var(--primary)] bg-[var(--primary)]/10"
+                                  : "border-border text-muted-foreground hover:text-foreground bg-card"
+                              }`}
+                            >
+                              {h}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -1370,7 +1399,7 @@ export function PdfTemplateSection({
                             ? {
                                 ...el,
                                 ...patch,
-                                height: tableHeightForRows(td.headerRows, td.bodyRows),
+                                height: tableHeightForData(td),
                               }
                             : el,
                         ),
@@ -1634,7 +1663,7 @@ export function PdfTemplateSection({
                     const td = normalizeTableData(data);
                     updateElement(el.id, {
                       tableData: td,
-                      height: tableHeightForRows(td.headerRows, td.bodyRows),
+                      height: tableHeightForData(td),
                     });
                   }}
                   onStartEdit={() => {
@@ -1894,6 +1923,22 @@ function FreeTableBuilder({
 
   const activeRotate = normalizeCellRotate(activeCell?.rotate);
 
+  const commitRowHeight = (section: "header" | "body", index: number, raw: string) => {
+    if (raw.trim() === "") {
+      onTableData(setRowHeightAt(data, section, index, 0));
+      return;
+    }
+    const pt = Number(raw);
+    if (!Number.isFinite(pt)) return;
+    onTableData(setRowHeightAt(data, section, index, pt));
+  };
+
+  const finishRowHeight = (section: "header" | "body", index: number, raw: string) => {
+    const pt = Number(raw);
+    if (!Number.isFinite(pt) || pt <= 0) return;
+    if (pt < MIN_TABLE_ROW_PT) onTableData(setRowHeightAt(data, section, index, MIN_TABLE_ROW_PT));
+  };
+
   const applyCellRotate = (rotate: PdfCellRotate) => {
     if (!bounds) return;
     let next = data;
@@ -1917,7 +1962,8 @@ function FreeTableBuilder({
         Har bir katakning o&apos;ngidagi ▾ tugmasi:{" "}
         <strong>O&apos;zgarmaydigan</strong> — faqat shu yerda tahrir;{" "}
         <strong>O&apos;zgaradigan</strong> — Natijalar sahifasida to&apos;ldiriladi.
-        Ustun kengligini jadvalda tortib o&apos;zgartirish mumkin.
+        Ustun kengligi va qator balandligini jadval chegarasini tortib o&apos;zgartirish
+        mumkin. Aylantirilgan matn balandlikka sig&apos;masa, keyingi qatorlarga bo&apos;linadi.
       </p>
 
       <div>
@@ -2052,6 +2098,50 @@ function FreeTableBuilder({
         </div>
         <p className="text-[10px] text-muted-foreground mt-1">
           Yoki jadvalda ustun chegarasini torting
+        </p>
+      </div>
+
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1.5">
+          Qator balandliklari (pt)
+        </label>
+        <div className="grid gap-1.5 max-h-48 overflow-y-auto pr-0.5">
+          {data.headerRowHeights.map((h, i) => (
+            <label key={`hh-${i}`} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="shrink-0 w-8 tabular-nums">H{i + 1}</span>
+              <input
+                type="number"
+                min={MIN_TABLE_ROW_PT}
+                max={420}
+                step={1}
+                placeholder="avto"
+                value={h > 0 ? Math.round(h * 10) / 10 : ""}
+                onChange={e => commitRowHeight("header", i, e.target.value)}
+                onBlur={e => finishRowHeight("header", i, e.target.value)}
+                className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-[12px] text-foreground tabular-nums focus:outline-none"
+              />
+            </label>
+          ))}
+          {data.bodyRowHeights.map((h, i) => (
+            <label key={`bh-${i}`} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="shrink-0 w-8 tabular-nums">B{i + 1}</span>
+              <input
+                type="number"
+                min={MIN_TABLE_ROW_PT}
+                max={420}
+                step={1}
+                placeholder="avto"
+                value={h > 0 ? Math.round(h * 10) / 10 : ""}
+                onChange={e => commitRowHeight("body", i, e.target.value)}
+                onBlur={e => finishRowHeight("body", i, e.target.value)}
+                className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-[12px] text-foreground tabular-nums focus:outline-none"
+              />
+            </label>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Bo&apos;sh — avtomatik. Yoki qator pastki chegarasini torting. Aylantirilgan
+          matn shu balandlikka moslab qatorlarga ajraladi.
         </p>
       </div>
 
@@ -2331,7 +2421,7 @@ function CanvasElement({
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     color: "#0f172a",
-    lineHeight: 1.35,
+    lineHeight: resolvePdfLineHeight(element.style),
     width: "100%",
     height: "100%",
   };
@@ -2442,6 +2532,12 @@ function CanvasElement({
             onColWidthsChange={widths => {
               onTableDataChange(
                 updateColWidths(normalizeTableData(element.tableData), widths),
+              );
+            }}
+            resizableRows={selected}
+            onRowHeightsChange={(section, heights) => {
+              onTableDataChange(
+                updateRowHeights(normalizeTableData(element.tableData), section, heights),
               );
             }}
             compact

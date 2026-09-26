@@ -21,6 +21,7 @@ import {
   getTemplatePageLayouts,
   normalizeTableData,
   previewYFromDocumentY,
+  resolvePdfLineHeight,
   type PdfDynamicContext,
   type PdfElement,
   type PdfPageLayout,
@@ -594,7 +595,7 @@ function FillableElement({
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     color: "#0f172a",
-    lineHeight: 1.35,
+    lineHeight: resolvePdfLineHeight(element.style),
     pointerEvents: "none",
     userSelect: "none",
   };

@@ -26,13 +26,30 @@ import { getAllAnalyses, updateAnalysis, type Analysis } from "@/api/analysis";
 import { getStoredCompanyId, getStoredUser } from "@/api/session";
 import { getCompanyById, type Company } from "@/api/company";
 
+/** Worddagi qator oralig'i ko'paytmasi */
+export const PDF_LINE_HEIGHTS = [1, 1.2, 1.5, 1.7, 2] as const;
+export type PdfLineHeight = (typeof PDF_LINE_HEIGHTS)[number];
+/** Saqlanmagan matnlarning joriy oralig'i — eski shablonlar surilmasin */
+export const PDF_DEFAULT_LINE_HEIGHT = 1.35;
+
 export type PdfTextStyle = {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
   fontSize?: number;
   align?: "left" | "center" | "right";
+  lineHeight?: PdfLineHeight;
 };
+
+export function normalizeLineHeight(value: unknown): PdfLineHeight | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  return PDF_LINE_HEIGHTS.find(h => Math.abs(h - n) < 0.001);
+}
+
+export function resolvePdfLineHeight(style?: PdfTextStyle | null): number {
+  return normalizeLineHeight(style?.lineHeight) ?? PDF_DEFAULT_LINE_HEIGHT;
+}
 
 export type PdfElementType =
   | "heading1"
@@ -473,6 +490,13 @@ export type PdfTableData = {
   bodyCells: PdfTableCell[][];
   /** Relative column widths in %; length === cols; sum ≈ 100 */
   colWidths: number[];
+  /**
+   * Header row heights in A4 points. 0 = automatic (content).
+   * Length === headerRows.
+   */
+  headerRowHeights: number[];
+  /** Body row heights in A4 points. 0 = automatic. Length === bodyRows. */
+  bodyRowHeights: number[];
 };
 
 /** Rectangular selection in header or body (Excel-like) */
@@ -829,6 +853,11 @@ const MIN_BODY_ROWS = 0;
 const MAX_BODY_ROWS = 80;
 /** Comfortable floor while every column can still fit in 100%. */
 const MIN_COL_WIDTH_PCT = 5;
+/** Explicit row height bounds (A4 points). 0 stays "auto". */
+export const MIN_TABLE_ROW_PT = 14;
+export const MAX_TABLE_ROW_PT = 420;
+const DEFAULT_HEADER_ROW_PT = 26;
+const DEFAULT_BODY_ROW_PT = 24;
 
 function clampCols(n: number) {
   const v = Math.round(Number(n));
@@ -869,6 +898,17 @@ export function normalizeColWidths(widths: number[] | null | undefined, cols: nu
   const sum = next.reduce((a, b) => a + b, 0);
   if (sum <= 0) return equalColWidths(c);
   return next.map(w => Math.round((w / sum) * 10000) / 100);
+}
+
+/** 0 = auto height. Positive values are A4 points, capped at the maximum. */
+export function normalizeRowHeights(raw: unknown, rows: number): number[] {
+  const src = Array.isArray(raw) ? raw : [];
+  const n = Math.max(0, rows);
+  return Array.from({ length: n }, (_, i) => {
+    const v = Number(src[i]);
+    if (!Number.isFinite(v) || v <= 0) return 0;
+    return Math.round(Math.min(MAX_TABLE_ROW_PT, v) * 10) / 10;
+  });
 }
 
 /** Drag resize between col `leftCol` and `leftCol+1`; deltaPct is change to left column */
@@ -954,6 +994,8 @@ export function createEmptyTableData(cols = 4, headerRows = 1, bodyRows = 3): Pd
     bodyRows: br,
     bodyCells,
     colWidths: equalColWidths(c),
+    headerRowHeights: normalizeRowHeights(null, hr),
+    bodyRowHeights: normalizeRowHeights(null, br),
   };
 }
 
@@ -1082,6 +1124,8 @@ export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
     bodyRows: br,
     bodyCells: outBody,
     colWidths: normalizeColWidths(legacy.colWidths, c),
+    headerRowHeights: normalizeRowHeights(legacy.headerRowHeights, hr),
+    bodyRowHeights: normalizeRowHeights(legacy.bodyRowHeights, br),
   };
 }
 
@@ -1106,6 +1150,8 @@ export function resizeTableCols(data: PdfTableData, nextCols: number): PdfTableD
     bodyRows: prev.bodyRows,
     bodyCells,
     colWidths,
+    headerRowHeights: prev.headerRowHeights,
+    bodyRowHeights: prev.bodyRowHeights,
   });
 }
 
@@ -1120,6 +1166,8 @@ export function resizeHeaderRows(data: PdfTableData, nextHeaderRows: number): Pd
     bodyRows: prev.bodyRows,
     bodyCells: prev.bodyCells.map(r => r.map(c => ({ ...c }))),
     colWidths: prev.colWidths,
+    headerRowHeights: prev.headerRowHeights,
+    bodyRowHeights: prev.bodyRowHeights,
   });
 }
 
@@ -1133,6 +1181,8 @@ export function resizeBodyRows(data: PdfTableData, nextBodyRows: number): PdfTab
     bodyRows: br,
     bodyCells: makeCellGrid(br, prev.cols, prev.bodyCells),
     colWidths: [...prev.colWidths],
+    headerRowHeights: prev.headerRowHeights,
+    bodyRowHeights: prev.bodyRowHeights,
   });
 }
 
@@ -1169,6 +1219,36 @@ export function updateBodyCell(
 export function updateColWidths(data: PdfTableData, colWidths: number[]): PdfTableData {
   const next = normalizeTableData(data);
   return { ...next, colWidths: normalizeColWidths(colWidths, next.cols) };
+}
+
+export function updateRowHeights(
+  data: PdfTableData,
+  section: "header" | "body",
+  heights: number[],
+): PdfTableData {
+  const next = normalizeTableData(data);
+  if (section === "body") {
+    return { ...next, bodyRowHeights: normalizeRowHeights(heights, next.bodyRows) };
+  }
+  return { ...next, headerRowHeights: normalizeRowHeights(heights, next.headerRows) };
+}
+
+/** Set one row's height in A4 points. `pt <= 0` restores automatic height. */
+export function setRowHeightAt(
+  data: PdfTableData,
+  section: "header" | "body",
+  row: number,
+  pt: number,
+): PdfTableData {
+  const next = normalizeTableData(data);
+  const isBody = section === "body";
+  const count = isBody ? next.bodyRows : next.headerRows;
+  if (row < 0 || row >= count) return next;
+  const heights = isBody ? [...next.bodyRowHeights] : [...next.headerRowHeights];
+  heights[row] = Number(pt) > 0 ? Number(pt) : 0;
+  return isBody
+    ? { ...next, bodyRowHeights: normalizeRowHeights(heights, count) }
+    : { ...next, headerRowHeights: normalizeRowHeights(heights, count) };
 }
 
 /** Find the master cell that covers (row,col) in header, or the cell itself */
@@ -1444,16 +1524,35 @@ function sanitizeMerges(data: PdfTableData): PdfTableData {
 }
 
 export function tableHeightForRows(headerRows: number, bodyRows: number, compact = false): number {
-  const h = compact ? 20 : 26;
-  const b = compact ? 18 : 24;
+  const h = compact ? 20 : DEFAULT_HEADER_ROW_PT;
+  const b = compact ? 18 : DEFAULT_BODY_ROW_PT;
   return Math.max(80, headerRows * h + Math.max(bodyRows, 1) * b + 8);
+}
+
+/** Table box height in A4 points, including explicit row heights. */
+export function tableHeightForData(data: PdfTableData): number {
+  const grid = normalizeTableData(data);
+  let h = 8;
+  for (let i = 0; i < grid.headerRows; i++) {
+    const rh = grid.headerRowHeights[i] ?? 0;
+    h += rh > 0 ? rh : DEFAULT_HEADER_ROW_PT;
+  }
+  if (grid.bodyRows <= 0) {
+    h += DEFAULT_BODY_ROW_PT;
+  } else {
+    for (let i = 0; i < grid.bodyRows; i++) {
+      const rh = grid.bodyRowHeights[i] ?? 0;
+      h += rh > 0 ? rh : DEFAULT_BODY_ROW_PT;
+    }
+  }
+  return Math.max(80, h);
 }
 
 /** Effective painted height of an element (tables grow with row count). */
 export function getElementRenderHeight(el: PdfElement): number {
   if (el.type === "table") {
     const grid = normalizeTableData(el.tableData);
-    return Math.max(el.height, tableHeightForRows(grid.headerRows, grid.bodyRows, true));
+    return Math.max(el.height, tableHeightForData(grid));
   }
   return el.height;
 }
@@ -1646,6 +1745,10 @@ export function normalizePdfElement(raw: unknown): PdfElement | null {
     el.style && typeof el.style === "object" && !Array.isArray(el.style)
       ? (el.style as PdfTextStyle)
       : {};
+  const lineHeight = normalizeLineHeight(styleRaw.lineHeight);
+  const style: PdfTextStyle = { ...defaultStyleForType(type), ...styleRaw };
+  if (lineHeight) style.lineHeight = lineHeight;
+  else delete style.lineHeight;
 
   const analysisIdRaw = Number(el.analysisId);
   const dynamicKey =
@@ -1674,7 +1777,7 @@ export function normalizePdfElement(raw: unknown): PdfElement | null {
       type === "dynamic"
         ? el.showDynamicLabel !== false
         : undefined,
-    style: { ...defaultStyleForType(type), ...styleRaw },
+    style,
   };
 }
 
