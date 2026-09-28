@@ -149,18 +149,12 @@ function monthRange(year: number, monthIndex: number) {
   return { startDate: toIsoDate(start), endDate: toIsoDate(endClamped) };
 }
 
-function lastNMonths(n: number): { year: number; monthIndex: number; label: string }[] {
-  const now = new Date();
-  const out: { year: number; monthIndex: number; label: string }[] = [];
-  for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    out.push({
-      year: d.getFullYear(),
-      monthIndex: d.getMonth(),
-      label: MONTH_LABELS_UZ[d.getMonth()],
-    });
-  }
-  return out;
+function yearMonths(year = new Date().getFullYear()): { year: number; monthIndex: number; label: string }[] {
+  return MONTH_LABELS_UZ.map((label, monthIndex) => ({
+    year,
+    monthIndex,
+    label,
+  }));
 }
 
 function orderSubject(order: Order) {
@@ -377,7 +371,10 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const isLabStatsRole =
     role === "lab_director" || role === "lab_asistant" || role === "director" || isKassirSangig;
 
-  const initialRange = useMemo(() => currentMonthRange(), []);
+  const initialRange = useMemo(() => {
+    const d = toIsoDate(new Date());
+    return { startDate: d, endDate: d };
+  }, []);
   const [startDate, setStartDate] = useState(initialRange.startDate);
   const [endDate, setEndDate] = useState(initialRange.endDate);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -585,7 +582,8 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     void (async () => {
       setTrendLoading(true);
       try {
-        const months = lastNMonths(7);
+        const year = new Date().getFullYear();
+        const months = yearMonths(year);
         const rows: TrendRow[] = [];
         for (const m of months) {
           const range = monthRange(m.year, m.monthIndex);
@@ -880,9 +878,8 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     boxShadow: "0 8px 24px rgba(12,31,28,0.1)",
   };
 
-  const trendRangeLabel = trendData.length > 0
-    ? `${trendData[0].month} – ${trendData[trendData.length - 1].month}`
-    : "Oxirgi 7 oy";
+  const trendYear = new Date().getFullYear();
+  const trendRangeLabel = `Yanvar – Dekabr ${trendYear}`;
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar animate-fade-in">
