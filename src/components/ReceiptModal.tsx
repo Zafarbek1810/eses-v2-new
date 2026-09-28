@@ -30,6 +30,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   cash: "Naqd",
   card: "Karta",
   click: "Click",
+  transfer: "Hisobdan o'tkazish",
 };
 
 const QR_PRINT_OPTIONS = {

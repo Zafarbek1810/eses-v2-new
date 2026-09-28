@@ -1,23 +1,31 @@
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  FileText, ClipboardCheck, Award, Building2,
-  Users, Archive, Plus, Download, RefreshCw, CheckCircle,
-  ArrowUpRight, ArrowDownRight, Info, AlertCircle, Filter, Calendar,
+  FileText, ClipboardCheck, Building2,
+  Users, RefreshCw, CheckCircle,
+  ArrowUpRight, ArrowDownRight, Info, AlertCircle, Calendar,
   Wallet, ClipboardList, Banknote, Clock3, Loader2, ChevronDown,
-  CreditCard, Coins, MousePointerClick,
+  CreditCard, Coins, MousePointerClick, FlaskConical,
 } from "lucide-react";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
+  AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { getOrderTotalAmountRange, type OrderTotalAmountRange } from "@/api/order";
+import {
+  getAllOrders,
+  getOrdersFull,
+  getOrderTotalAmountRange,
+  resolveOrderType,
+  type Order,
+  type OrderTotalAmountRange,
+} from "@/api/order";
 import { getAllLaboratories } from "@/api/laboratory";
 import { getStoredUser } from "@/api/session";
 import { normalizeRoleName } from "@/lib/roles";
 import { resolveUserLabScope } from "@/lib/labScope";
+import { statusLabel } from "@/lib/orderStatus";
 import { Calendar as DatePickerCalendar } from "@/app/components/ui/calendar";
 import {
   Popover,
@@ -25,36 +33,52 @@ import {
   PopoverTrigger,
 } from "@/app/components/ui/popover";
 
-const TREND_DATA = [
-  { month: "Jan", applications: 245, inspections: 89 },
-  { month: "Feb", applications: 312, inspections: 102 },
-  { month: "Mar", applications: 289, inspections: 95 },
-  { month: "Apr", applications: 402, inspections: 134 },
-  { month: "May", applications: 378, inspections: 121 },
-  { month: "Jun", applications: 445, inspections: 156 },
-  { month: "Jul", applications: 521, inspections: 178 },
-];
-
 type LabChartRow = {
   lab: string;
   count: number;
   totalFinalAmount: number;
 };
 
-const ACTIVITIES = [
-  { id: "APP-2024-1842", type: "Application", org: "Alpha Pharma LLC", status: "Pending", date: "24 Jul 2024", inspector: "A. Karimov" },
-  { id: "INS-2024-0456", type: "Inspection", org: "Fresh Market #12", status: "Completed", date: "23 Jul 2024", inspector: "B. Toshmatov" },
-  { id: "CERT-2024-0234", type: "Certificate", org: "Golden Food Factory", status: "Approved", date: "23 Jul 2024", inspector: "D. Yusupov" },
-  { id: "APP-2024-1841", type: "Application", org: "City Hospital No.3", status: "In Review", date: "22 Jul 2024", inspector: "S. Rakhimov" },
-  { id: "INS-2024-0455", type: "Inspection", org: "Sun Bakery", status: "Scheduled", date: "22 Jul 2024", inspector: "N. Mirzaev" },
-  { id: "APP-2024-1840", type: "Application", org: "Omega Chemicals", status: "Rejected", date: "21 Jul 2024", inspector: "A. Karimov" },
+type TrendRow = {
+  month: string;
+  orders: number;
+  paid: number;
+};
+
+type ActivityRow = {
+  id: string;
+  type: string;
+  subject: string;
+  owner: string;
+  status: string;
+  payment: string;
+  date: string;
+};
+
+type InsightItem = {
+  id: string;
+  title: string;
+  desc: string;
+  type: "info" | "warning" | "success";
+  date: string;
+};
+
+const MONTH_LABELS_UZ = [
+  "Yan", "Fev", "Mar", "Apr", "May", "Iyun",
+  "Iyul", "Avg", "Sen", "Okt", "Noy", "Dek",
+] as const;
+
+const PIE_COLORS = [
+  "#0D9488", "#059669", "#2563EB", "#D97706",
+  "#7C3AED", "#EA580C", "#0E7490", "#DC2626",
+  "#0891B2", "#4F46E5",
 ];
 
-const ANNOUNCEMENTS = [
-  { id: 1, title: "System Maintenance", desc: "Scheduled maintenance on July 28 from 02:00–04:00 AM", type: "info", date: "24 Jul" },
-  { id: 2, title: "New Regulation Update", desc: "Updated sanitary norms for food processing facilities effective Aug 1", type: "warning", date: "22 Jul" },
-  { id: 3, title: "Q2 Report Available", desc: "Quarterly inspection report for Q2 2024 is now available", type: "success", date: "20 Jul" },
-];
+const ORDER_TYPE_LABELS: Record<string, string> = {
+  patient: "Bemor",
+  sample: "Tashkilot",
+  course: "Kurs",
+};
 
 function formatSom(value: number) {
   return `${Math.round(value).toLocaleString("uz-UZ")} so'm`;
@@ -112,6 +136,121 @@ async function fetchRangeForLabs(
   return sumRanges(parts);
 }
 
+function monthRange(year: number, monthIndex: number) {
+  const start = new Date(year, monthIndex, 1);
+  const end = new Date(year, monthIndex + 1, 0);
+  const today = new Date();
+  const endClamped =
+    end.getFullYear() === today.getFullYear() &&
+    end.getMonth() === today.getMonth() &&
+    end > today
+      ? today
+      : end;
+  return { startDate: toIsoDate(start), endDate: toIsoDate(endClamped) };
+}
+
+function lastNMonths(n: number): { year: number; monthIndex: number; label: string }[] {
+  const now = new Date();
+  const out: { year: number; monthIndex: number; label: string }[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push({
+      year: d.getFullYear(),
+      monthIndex: d.getMonth(),
+      label: MONTH_LABELS_UZ[d.getMonth()],
+    });
+  }
+  return out;
+}
+
+function orderSubject(order: Order) {
+  const p = order.patient;
+  if (p) {
+    const name = `${p.last_name ?? ""} ${p.first_name ?? ""}`.trim();
+    if (name) return name;
+  }
+  const org = String(order.name ?? "").trim();
+  return org || "—";
+}
+
+function orderOwnerLabel(order: Order) {
+  const o = order.owner;
+  if (!o) return "—";
+  const name = `${o.surname ?? ""} ${o.username ?? ""}`.trim();
+  return name || "—";
+}
+
+function formatShortDate(iso: string | null | undefined) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return format(d, "dd.MM.yyyy");
+  } catch {
+    return "—";
+  }
+}
+
+function orderTypeLabel(order: Order) {
+  const t = resolveOrderType(order);
+  return ORDER_TYPE_LABELS[t] ?? t;
+}
+
+function mapOrderToActivity(order: Order): ActivityRow {
+  return {
+    id: `#${order.id}`,
+    type: orderTypeLabel(order),
+    subject: orderSubject(order),
+    owner: orderOwnerLabel(order),
+    status: String(order.status ?? "pending"),
+    payment: String(order.payment_status ?? "pending"),
+    date: formatShortDate(order.createdAt ?? order.updatedAt),
+  };
+}
+
+async function fetchRecentOrders(labIds: number[] | null, limit = 8): Promise<{ rows: ActivityRow[]; total: number }> {
+  if (labIds && labIds.length === 0) return { rows: [], total: 0 };
+
+  const sortNewest = (list: Order[]) =>
+    [...list].sort((a, b) => {
+      const ta = new Date(a.createdAt ?? a.updatedAt ?? 0).getTime();
+      const tb = new Date(b.createdAt ?? b.updatedAt ?? 0).getTime();
+      return tb - ta;
+    });
+
+  try {
+    if (!labIds || labIds.length <= 1) {
+      const res = await getOrdersFull({
+        page: 1,
+        limit,
+        lab_id: labIds?.[0],
+      });
+      const sorted = sortNewest(res.data).slice(0, limit);
+      return { rows: sorted.map(mapOrderToActivity), total: res.total };
+    }
+
+    const parts = await Promise.all(
+      labIds.map(id => getOrdersFull({ page: 1, limit, lab_id: id }).catch(() => ({ data: [] as Order[], total: 0, page: 1, limit }))),
+    );
+    const merged = sortNewest(parts.flatMap(p => p.data)).slice(0, limit);
+    const total = parts.reduce((acc, p) => acc + (p.total || 0), 0);
+    return { rows: merged.map(mapOrderToActivity), total };
+  } catch {
+    const all = await getAllOrders().catch(() => [] as Order[]);
+    let list = sortNewest(all);
+    if (labIds?.length) {
+      const set = new Set(labIds);
+      list = list.filter(o =>
+        (o.items ?? []).some(it => it.laboratory?.id != null && set.has(it.laboratory.id)),
+      );
+    }
+    return {
+      rows: list.slice(0, limit).map(mapOrderToActivity),
+      total: list.length,
+    };
+  }
+}
+
 const DATE_PRESETS = [
   {
     id: "today",
@@ -151,21 +290,24 @@ const DATE_PRESETS = [
 const PAYMENT_METHODS = [
   { id: "cash", label: "Naqd", method: "cash", icon: Coins, iconBg: "#ECFDF5", iconColor: "#059669" },
   { id: "card", label: "Karta", method: "card", icon: CreditCard, iconBg: "#EFF6FF", iconColor: "#2563EB" },
-  { id: "click", label: "Pul o'tkazma", method: "click", icon: MousePointerClick, iconBg: "#FFF7ED", iconColor: "#EA580C" },
+  { id: "click", label: "Click", method: "click", icon: MousePointerClick, iconBg: "#FFF7ED", iconColor: "#EA580C" },
+  { id: "transfer", label: "Hisobdan o'tkazish", method: "transfer", icon: Banknote, iconBg: "#F5F3FF", iconColor: "#7C3AED" },
 ] as const;
 
 const StatusBadge = ({ status }: { status: string }) => {
+  const key = status.toLowerCase();
   const MAP: Record<string, string> = {
-    Pending:   "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
-    Completed: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400",
-    Approved:  "bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300",
-    "In Review": "bg-cyan-50 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300",
-    Scheduled: "bg-teal-50/80 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300",
-    Rejected:  "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400",
+    pending: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
+    completed: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400",
+    paid: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400",
+    partially_completed: "bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300",
+    in_progress: "bg-cyan-50 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300",
+    canceled: "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400",
+    refunded: "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400",
   };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${MAP[status] ?? "bg-gray-50 text-gray-700"}`}>
-      {status}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${MAP[key] ?? "bg-gray-50 text-gray-700"}`}>
+      {statusLabel(status)}
     </span>
   );
 };
@@ -250,10 +392,22 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     cash: emptyRange(),
     card: emptyRange(),
     click: emptyRange(),
+    transfer: emptyRange(),
   });
 
   const [labChartLoading, setLabChartLoading] = useState(true);
   const [labChartData, setLabChartData] = useState<LabChartRow[]>([]);
+
+  const [trendLoading, setTrendLoading] = useState(!isKassirSangig);
+  const [trendData, setTrendData] = useState<TrendRow[]>([]);
+
+  const [activitiesLoading, setActivitiesLoading] = useState(!isKassirSangig);
+  const [activities, setActivities] = useState<ActivityRow[]>([]);
+  const [activitiesTotal, setActivitiesTotal] = useState(0);
+
+  const [labCompleted, setLabCompleted] = useState<OrderTotalAmountRange>(emptyRange());
+  const [labPartial, setLabPartial] = useState<OrderTotalAmountRange>(emptyRange());
+  const [extraStatsLoading, setExtraStatsLoading] = useState(isLabStatsRole && !isKassirSangig);
 
   const selectedRange: DateRange = {
     from: parseIsoDate(startDate),
@@ -323,19 +477,20 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       setLabStatsLoading(true);
       try {
         const baseParams = { startDate, endDate };
-        const [all, paid, pendingPay, cash, card, click] = await Promise.all([
+        const [all, paid, pendingPay, cash, card, click, transfer] = await Promise.all([
           fetchRangeForLabs(labIds, baseParams),
           fetchRangeForLabs(labIds, { ...baseParams, payment_status: "paid" }),
           fetchRangeForLabs(labIds, { ...baseParams, payment_status: "pending" }),
           fetchRangeForLabs(labIds, { ...baseParams, payment_method: "cash" }),
           fetchRangeForLabs(labIds, { ...baseParams, payment_method: "card" }),
           fetchRangeForLabs(labIds, { ...baseParams, payment_method: "click" }),
+          fetchRangeForLabs(labIds, { ...baseParams, payment_method: "transfer" }),
         ]);
         if (cancelled) return;
         setLabAll(all);
         setLabPaid(paid);
         setLabPending(pendingPay);
-        setPaymentByMethod({ cash, card, click });
+        setPaymentByMethod({ cash, card, click, transfer });
       } catch {
         if (cancelled) return;
         setLabAll(emptyRange());
@@ -345,6 +500,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
           cash: emptyRange(),
           card: emptyRange(),
           click: emptyRange(),
+          transfer: emptyRange(),
         });
       } finally {
         if (!cancelled) setLabStatsLoading(false);
@@ -374,14 +530,17 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
           : allLabs;
         const rows: LabChartRow[] = [];
 
-        // Parallel, lekin juda ko'p lab bo'lsa batch qilib so'raymiz
         const BATCH = 6;
         for (let i = 0; i < list.length; i += BATCH) {
           const chunk = list.slice(i, i + BATCH);
           const part = await Promise.all(
             chunk.map(async lab => {
               try {
-                const stats = await getOrderTotalAmountRange({ lab_id: lab.id });
+                const stats = await getOrderTotalAmountRange({
+                  lab_id: lab.id,
+                  startDate,
+                  endDate,
+                });
                 return {
                   lab: lab.name?.trim() || `Lab #${lab.id}`,
                   count: stats.count,
@@ -402,7 +561,9 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
         if (cancelled) return;
         rows.sort((a, b) => b.count - a.count || b.totalFinalAmount - a.totalFinalAmount);
-        setLabChartData(rows);
+        setLabChartData(rows.filter(r => r.count > 0 || r.totalFinalAmount > 0).length > 0
+          ? rows.filter(r => r.count > 0 || r.totalFinalAmount > 0)
+          : rows);
       } catch {
         if (!cancelled) setLabChartData([]);
       } finally {
@@ -413,7 +574,104 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     return () => {
       cancelled = true;
     };
+  }, [isKassirSangig, labScopeReady, scopedLabIds, startDate, endDate]);
+
+  useEffect(() => {
+    if (isKassirSangig) return;
+
+    let cancelled = false;
+    const labIds = null as number[] | null;
+
+    void (async () => {
+      setTrendLoading(true);
+      try {
+        const months = lastNMonths(7);
+        const rows: TrendRow[] = [];
+        for (const m of months) {
+          const range = monthRange(m.year, m.monthIndex);
+          const [all, paid] = await Promise.all([
+            fetchRangeForLabs(labIds, range),
+            fetchRangeForLabs(labIds, { ...range, payment_status: "paid" }),
+          ]);
+          if (cancelled) return;
+          rows.push({
+            month: m.label,
+            orders: all.count,
+            paid: paid.count,
+          });
+        }
+        if (!cancelled) setTrendData(rows);
+      } catch {
+        if (!cancelled) setTrendData([]);
+      } finally {
+        if (!cancelled) setTrendLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isKassirSangig]);
+
+  useEffect(() => {
+    if (isKassirSangig) return;
+    if (!labScopeReady) return;
+
+    let cancelled = false;
+    const labIds = isKassirSangig ? (scopedLabIds ?? []) : null;
+
+    void (async () => {
+      setActivitiesLoading(true);
+      try {
+        const result = await fetchRecentOrders(labIds, 8);
+        if (!cancelled) {
+          setActivities(result.rows);
+          setActivitiesTotal(result.total);
+        }
+      } catch {
+        if (!cancelled) {
+          setActivities([]);
+          setActivitiesTotal(0);
+        }
+      } finally {
+        if (!cancelled) setActivitiesLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isKassirSangig, labScopeReady, scopedLabIds]);
+
+  useEffect(() => {
+    if (!isLabStatsRole || isKassirSangig || !labScopeReady) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      setExtraStatsLoading(true);
+      try {
+        const baseParams = { startDate, endDate };
+        const [completed, partial] = await Promise.all([
+          fetchRangeForLabs(null, { ...baseParams, status: "completed" }),
+          fetchRangeForLabs(null, { ...baseParams, status: "partially_completed" }),
+        ]);
+        if (cancelled) return;
+        setLabCompleted(completed);
+        setLabPartial(partial);
+      } catch {
+        if (cancelled) return;
+        setLabCompleted(emptyRange());
+        setLabPartial(emptyRange());
+      } finally {
+        if (!cancelled) setExtraStatsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLabStatsRole, isKassirSangig, labScopeReady, startDate, endDate]);
 
   const defaultStats = [
     {
@@ -494,6 +752,125 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
   const stats = isLabStatsRole ? labStats : defaultStats;
 
+  const topLab = labChartData[0] ?? null;
+  const labsWithOrders = labChartData.filter(r => r.count > 0).length;
+  const pieTotal = labChartData.reduce((acc, r) => acc + r.count, 0);
+
+  const quickActions = [
+    {
+      icon: ClipboardList,
+      label: "Buyurtmalar",
+      value: labStatsLoading ? "…" : labAll.count.toLocaleString("uz-UZ"),
+      hint: rangeLabel,
+      color: primaryColor,
+    },
+    {
+      icon: Banknote,
+      label: "To'langan",
+      value: labStatsLoading ? "…" : labPaid.count.toLocaleString("uz-UZ"),
+      hint: formatSom(labPaid.totalFinalAmount),
+      color: "#059669",
+    },
+    {
+      icon: Clock3,
+      label: "To'lov kutilmoqda",
+      value: labStatsLoading ? "…" : labPending.count.toLocaleString("uz-UZ"),
+      hint: formatSom(labPending.totalFinalAmount),
+      color: "#D97706",
+    },
+    {
+      icon: CheckCircle,
+      label: "Yakunlangan",
+      value: extraStatsLoading ? "…" : labCompleted.count.toLocaleString("uz-UZ"),
+      hint: formatSom(labCompleted.totalFinalAmount),
+      color: "#0E7490",
+    },
+    {
+      icon: FlaskConical,
+      label: "Laboratoriyalar",
+      value: labChartLoading ? "…" : String(labChartData.length),
+      hint: `${labsWithOrders} tasida buyurtma bor`,
+      color: "#7C3AED",
+    },
+    {
+      icon: ClipboardCheck,
+      label: "Jarayonda",
+      value: extraStatsLoading ? "…" : labPartial.count.toLocaleString("uz-UZ"),
+      hint: "Qisman yakunlangan",
+      color: "#0F766E",
+    },
+  ];
+
+  const announcements = ((): InsightItem[] => {
+    const today = format(new Date(), "dd.MM");
+    const items: InsightItem[] = [];
+
+    if (labPending.count > 0) {
+      items.push({
+        id: "pending-pay",
+        title: "To'lov kutilmoqda",
+        desc: `${labPending.count} ta buyurtma · ${formatSom(labPending.totalFinalAmount)}`,
+        type: "warning",
+        date: today,
+      });
+    }
+
+    if (labPartial.count > 0) {
+      items.push({
+        id: "partial",
+        title: "Jarayondagi buyurtmalar",
+        desc: `${labPartial.count} ta buyurtma qisman yakunlangan`,
+        type: "info",
+        date: today,
+      });
+    }
+
+    if (labCompleted.count > 0) {
+      items.push({
+        id: "completed",
+        title: "Yakunlangan buyurtmalar",
+        desc: `Tanlangan oraliqda ${labCompleted.count} ta buyurtma yakunlangan`,
+        type: "success",
+        date: today,
+      });
+    }
+
+    if (topLab && topLab.count > 0) {
+      items.push({
+        id: "top-lab",
+        title: "Eng faol laboratoriya",
+        desc: `${topLab.lab} · ${topLab.count} ta buyurtma · ${formatSom(topLab.totalFinalAmount)}`,
+        type: "info",
+        date: today,
+      });
+    }
+
+    const dominantPay = PAYMENT_METHODS
+      .map(m => ({ ...m, stats: paymentByMethod[m.method] }))
+      .sort((a, b) => b.stats.count - a.stats.count)[0];
+    if (dominantPay && dominantPay.stats.count > 0) {
+      items.push({
+        id: "pay-method",
+        title: "Asosiy to'lov usuli",
+        desc: `${dominantPay.label}: ${dominantPay.stats.count} ta · ${formatSom(dominantPay.stats.totalFinalAmount)}`,
+        type: "success",
+        date: today,
+      });
+    }
+
+    if (items.length === 0 && !labStatsLoading && !labChartLoading) {
+      items.push({
+        id: "empty",
+        title: "Ma'lumot yo'q",
+        desc: "Tanlangan oraliqda buyurtmalar topilmadi",
+        type: "info",
+        date: today,
+      });
+    }
+
+    return items.slice(0, 4);
+  })();
+
   const customTooltipStyle = {
     borderRadius: "10px",
     border: "1px solid var(--border)",
@@ -502,6 +879,10 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     fontSize: "12px",
     boxShadow: "0 8px 24px rgba(12,31,28,0.1)",
   };
+
+  const trendRangeLabel = trendData.length > 0
+    ? `${trendData[0].month} – ${trendData[trendData.length - 1].month}`
+    : "Oxirgi 7 oy";
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar animate-fade-in">
@@ -567,7 +948,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       </div>
 
       {isLabStatsRole && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {paymentMethodStats.map((s, i) => (
             <StatCard key={i} {...s} primaryColor={primaryColor} />
           ))}
@@ -579,43 +960,50 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         <div className="xl:col-span-2 bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
             <div>
-              <h3 className="text-[14px] font-bold text-foreground tracking-tight">Applications & Inspections Trend</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Monthly overview · January – July 2024</p>
+              <h3 className="text-[14px] font-bold text-foreground tracking-tight">Buyurtmalar tendensiyasi</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Oylik ko&apos;rsatkich · {trendRangeLabel}</p>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 rounded-sm" style={{ background: primaryColor }} />
-                <span className="text-[11px] text-muted-foreground">Applications</span>
+                <span className="text-[11px] text-muted-foreground">Buyurtmalar</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 rounded-sm bg-emerald-500" />
-                <span className="text-[11px] text-muted-foreground">Inspections</span>
+                <span className="text-[11px] text-muted-foreground">To&apos;langan</span>
               </div>
-              <button className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground">
-                <Download className="w-4 h-4" />
-              </button>
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={195}>
-            <AreaChart data={TREND_DATA} margin={{ top: 5, right: 0, bottom: 0, left: -18 }}>
-              <defs>
-                <linearGradient id="gradApps" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={primaryColor} stopOpacity={0.2} />
-                  <stop offset="95%" stopColor={primaryColor} stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="gradInsp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#059669" stopOpacity={0.18} />
-                  <stop offset="95%" stopColor="#059669" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={customTooltipStyle} />
-              <Area type="monotone" dataKey="applications" name="Applications" stroke={primaryColor} strokeWidth={2.5} fill="url(#gradApps)" dot={false} />
-              <Area type="monotone" dataKey="inspections" name="Inspections" stroke="#059669" strokeWidth={2.5} fill="url(#gradInsp)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
+          {trendLoading ? (
+            <div className="h-[195px] flex items-center justify-center text-muted-foreground gap-2 text-[13px]">
+              <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
+            </div>
+          ) : trendData.length === 0 ? (
+            <div className="h-[195px] flex items-center justify-center text-[13px] text-muted-foreground">
+              Tendensiya ma&apos;lumoti yo&apos;q
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={195}>
+              <AreaChart data={trendData} margin={{ top: 5, right: 0, bottom: 0, left: -18 }}>
+                <defs>
+                  <linearGradient id="gradOrders" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={primaryColor} stopOpacity={0.2} />
+                    <stop offset="95%" stopColor={primaryColor} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="gradPaid" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#059669" stopOpacity={0.18} />
+                    <stop offset="95%" stopColor="#059669" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={customTooltipStyle} />
+                <Area type="monotone" dataKey="orders" name="Buyurtmalar" stroke={primaryColor} strokeWidth={2.5} fill="url(#gradOrders)" dot={false} />
+                <Area type="monotone" dataKey="paid" name="To'langan" stroke="#059669" strokeWidth={2.5} fill="url(#gradPaid)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
         )}
 
@@ -624,64 +1012,63 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
             <h3 className="text-[14px] font-bold text-foreground tracking-tight">Laboratoriyalar</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
               {isKassirSangig
-                ? "Buyurtmalar soni · biriktirilgan laboratoriya"
-                : "Buyurtmalar soni · barcha laboratoriyalar"}
+                ? "Buyurtmalar ulushi · biriktirilgan laboratoriya"
+                : `Buyurtmalar ulushi · ${rangeLabel}`}
             </p>
           </div>
           {labChartLoading ? (
             <div className="h-[195px] flex items-center justify-center text-muted-foreground gap-2 text-[13px]">
               <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
             </div>
-          ) : labChartData.length === 0 ? (
+          ) : labChartData.length === 0 || pieTotal === 0 ? (
             <div className="h-[195px] flex items-center justify-center text-[13px] text-muted-foreground">
               Laboratoriya ma&apos;lumoti yo&apos;q
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={Math.max(195, labChartData.length * 28)}>
-              <BarChart
-                data={labChartData}
-                layout="vertical"
-                margin={{ top: 0, right: 8, bottom: 0, left: -8 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                <XAxis
-                  type="number"
-                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
-                  axisLine={false}
-                  tickLine={false}
-                  allowDecimals={false}
-                />
-                <YAxis
-                  dataKey="lab"
-                  type="category"
-                  tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={90}
-                  tickFormatter={(v: string) =>
-                    v.length > 14 ? `${v.slice(0, 12)}…` : v
-                  }
-                />
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie
+                  data={labChartData}
+                  dataKey="count"
+                  nameKey="lab"
+                  cx="50%"
+                  cy="45%"
+                  innerRadius={48}
+                  outerRadius={78}
+                  paddingAngle={2}
+                  strokeWidth={0}
+                >
+                  {labChartData.map((_, i) => (
+                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  ))}
+                </Pie>
                 <Tooltip
-                  contentStyle={customTooltipStyle}
-                  formatter={(value: number | string) => [
-                    Number(value).toLocaleString("uz-UZ"),
-                    "Buyurtmalar",
-                  ]}
-                  labelFormatter={(label, payload) => {
-                    const row = payload?.[0]?.payload as LabChartRow | undefined;
+                  contentStyle={{
+                    ...customTooltipStyle,
+                    background: "#0F1F1C",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    color: "#FFFFFF",
+                  }}
+                  itemStyle={{ color: "#FFFFFF" }}
+                  labelStyle={{ color: "#FFFFFF" }}
+                  formatter={(value: number | string, _name, item) => {
+                    const row = item?.payload as LabChartRow | undefined;
+                    const count = Number(value);
+                    const pct = pieTotal > 0 ? Math.round((count / pieTotal) * 100) : 0;
                     const amount = row ? formatSom(row.totalFinalAmount) : "";
-                    return amount ? `${label} · ${amount}` : String(label);
+                    const labName = row?.lab?.trim() || String(_name || "Laboratoriya");
+                    return [`${count.toLocaleString("uz-UZ")} (${pct}%) · ${amount}`, labName];
                   }}
                 />
-                <Bar
-                  dataKey="count"
-                  name="Buyurtmalar"
-                  fill={primaryColor}
-                  radius={[0, 4, 4, 0]}
-                  maxBarSize={18}
+                <Legend
+                  verticalAlign="bottom"
+                  height={48}
+                  formatter={(value: string) =>
+                    value.length > 16 ? `${value.slice(0, 14)}…` : value
+                  }
+                  wrapperStyle={{ fontSize: 10 }}
                 />
-              </BarChart>
+              </PieChart>
             </ResponsiveContainer>
           )}
         </div>
@@ -692,27 +1079,37 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         <div className="xl:col-span-2 bg-card rounded-xl border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-secondary/25">
             <div>
-              <h3 className="text-[14px] font-bold text-foreground tracking-tight">Recent Activities</h3>
-              <p className="text-xs text-muted-foreground">Latest applications and inspections</p>
+              <h3 className="text-[14px] font-bold text-foreground tracking-tight">So&apos;nggi buyurtmalar</h3>
+              <p className="text-xs text-muted-foreground">Eng yangi buyurtmalar ro&apos;yxati</p>
             </div>
-            <div className="flex gap-1">
-              <button className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground" title="Filter">
-                <Filter className="w-4 h-4" />
-              </button>
-              <button className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground" title="Refresh">
-                <RefreshCw className="w-4 h-4" />
-              </button>
-              <button className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground" title="Export">
-                <Download className="w-4 h-4" />
-              </button>
-            </div>
+            <button
+              type="button"
+              className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground"
+              title="Yangilash"
+              onClick={() => {
+                setActivitiesLoading(true);
+                const labIds = isKassirSangig ? (scopedLabIds ?? []) : null;
+                void fetchRecentOrders(labIds, 8)
+                  .then(result => {
+                    setActivities(result.rows);
+                    setActivitiesTotal(result.total);
+                  })
+                  .catch(() => {
+                    setActivities([]);
+                    setActivitiesTotal(0);
+                  })
+                  .finally(() => setActivitiesLoading(false));
+              }}
+            >
+              <RefreshCw className={`w-4 h-4 ${activitiesLoading ? "animate-spin" : ""}`} />
+            </button>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
-                  {["ID", "Type", "Organization", "Inspector", "Status", "Date"].map(h => (
+                  {["ID", "Turi", "Mijoz", "Operator", "Holat", "To'lov", "Sana"].map(h => (
                     <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.1em] px-5 py-3">
                       {h}
                     </th>
@@ -720,86 +1117,106 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
                 </tr>
               </thead>
               <tbody>
-                {ACTIVITIES.map(a => (
-                  <tr
-                    key={a.id}
-                    className="border-b border-border hover:bg-secondary/35 transition-colors cursor-pointer"
-                  >
-                    <td className="px-5 py-3.5 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{a.id}</td>
-                    <td className="px-5 py-3.5 text-[12px] font-medium text-foreground whitespace-nowrap">{a.type}</td>
-                    <td className="px-5 py-3.5 text-[12px] text-foreground">{a.org}</td>
-                    <td className="px-5 py-3.5 text-[12px] text-foreground whitespace-nowrap">{a.inspector}</td>
-                    <td className="px-5 py-3.5"><StatusBadge status={a.status} /></td>
-                    <td className="px-5 py-3.5 text-[11px] text-muted-foreground whitespace-nowrap">{a.date}</td>
+                {activitiesLoading && activities.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-5 py-10 text-center text-[13px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
+                      </span>
+                    </td>
                   </tr>
-                ))}
+                ) : activities.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-5 py-10 text-center text-[13px] text-muted-foreground">
+                      Buyurtmalar topilmadi
+                    </td>
+                  </tr>
+                ) : (
+                  activities.map(a => (
+                    <tr
+                      key={a.id}
+                      className="border-b border-border hover:bg-secondary/35 transition-colors"
+                    >
+                      <td className="px-5 py-3.5 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{a.id}</td>
+                      <td className="px-5 py-3.5 text-[12px] font-medium text-foreground whitespace-nowrap">{a.type}</td>
+                      <td className="px-5 py-3.5 text-[12px] text-foreground">{a.subject}</td>
+                      <td className="px-5 py-3.5 text-[12px] text-foreground whitespace-nowrap">{a.owner}</td>
+                      <td className="px-5 py-3.5"><StatusBadge status={a.status} /></td>
+                      <td className="px-5 py-3.5"><StatusBadge status={a.payment} /></td>
+                      <td className="px-5 py-3.5 text-[11px] text-muted-foreground whitespace-nowrap">{a.date}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
 
           <div className="flex items-center justify-between px-5 py-3.5 border-t border-border">
-            <span className="text-xs text-muted-foreground">Showing 6 of 1,842 records</span>
-            <button className="text-xs font-bold" style={{ color: primaryColor }}>
-              View all →
-            </button>
+            <span className="text-xs text-muted-foreground">
+              {activities.length} / {activitiesTotal.toLocaleString("uz-UZ")} ta yozuv
+            </span>
           </div>
         </div>
 
         <div className="space-y-4">
           <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
-            <h3 className="text-[14px] font-bold text-foreground mb-4 tracking-tight">Quick Actions</h3>
+            <h3 className="text-[14px] font-bold text-foreground mb-4 tracking-tight">Tezkor ko&apos;rsatkichlar</h3>
             <div className="grid grid-cols-2 gap-2">
-              {[
-                { icon: Plus, label: "New Application", color: primaryColor },
-                { icon: ClipboardCheck, label: "Start Inspection", color: "#059669" },
-                { icon: Award, label: "Issue Certificate", color: "#0E7490" },
-                { icon: Download, label: "Export Report", color: "#D97706" },
-                { icon: Calendar, label: "Schedule Visit", color: "#0F766E" },
-                { icon: Archive, label: "View Archive", color: "#5A736E" },
-              ].map(action => (
-                <button
+              {quickActions.map(action => (
+                <div
                   key={action.label}
-                  className="flex flex-col items-center gap-2 p-3 rounded-lg border border-border hover:shadow-sm transition-all group text-center"
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = `${action.color}40`; (e.currentTarget as HTMLElement).style.background = `${action.color}08`; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = ""; (e.currentTarget as HTMLElement).style.background = ""; }}
+                  className="flex flex-col items-start gap-1.5 p-3 rounded-lg border border-border text-left"
+                  style={{ borderColor: `${action.color}28`, background: `${action.color}08` }}
                 >
-                  <div className="w-8 h-8 rounded-md flex items-center justify-center" style={{ background: `${action.color}15` }}>
-                    <action.icon className="w-4 h-4" style={{ color: action.color }} />
+                  <div className="flex items-center gap-2 w-full">
+                    <div className="w-7 h-7 rounded-md flex items-center justify-center shrink-0" style={{ background: `${action.color}18` }}>
+                      <action.icon className="w-3.5 h-3.5" style={{ color: action.color }} />
+                    </div>
+                    <span className="text-[10px] font-semibold text-muted-foreground leading-tight">{action.label}</span>
                   </div>
-                  <span className="text-[10px] font-semibold text-foreground leading-tight">{action.label}</span>
-                </button>
+                  <div className="text-[16px] font-extrabold text-foreground leading-none tracking-tight">
+                    {action.value}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground truncate w-full">{action.hint}</div>
+                </div>
               ))}
             </div>
           </div>
 
           <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
-            <h3 className="text-[14px] font-bold text-foreground mb-4 tracking-tight">Announcements</h3>
+            <h3 className="text-[14px] font-bold text-foreground mb-4 tracking-tight">Bildirishnomalar</h3>
             <div className="space-y-3">
-              {ANNOUNCEMENTS.map(a => {
-                const styles = {
-                  info:    { bg: "rgba(13,148,136,0.07)", border: "rgba(13,148,136,0.2)", icon: <Info className="w-3 h-3 text-teal-600" />, dot: "#0D9488" },
-                  warning: { bg: "rgba(217,119,6,0.07)", border: "rgba(217,119,6,0.2)", icon: <AlertCircle className="w-3 h-3 text-amber-600" />, dot: "#D97706" },
-                  success: { bg: "rgba(5,150,105,0.07)", border: "rgba(5,150,105,0.2)", icon: <CheckCircle className="w-3 h-3 text-emerald-600" />, dot: "#059669" },
-                }[a.type] ?? { bg: "", border: "", icon: null, dot: "" };
-                return (
-                  <div
-                    key={a.id}
-                    className="p-3 rounded-lg"
-                    style={{ background: styles.bg, border: `1px solid ${styles.border}` }}
-                  >
-                    <div className="flex items-start gap-2.5">
-                      <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5" style={{ background: `${styles.dot}20` }}>
-                        {styles.icon}
+              {(labStatsLoading || extraStatsLoading || labChartLoading) && announcements.length === 0 ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-[13px] text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
+                </div>
+              ) : (
+                announcements.map(a => {
+                  const styles = {
+                    info:    { bg: "rgba(13,148,136,0.07)", border: "rgba(13,148,136,0.2)", icon: <Info className="w-3 h-3 text-teal-600" />, dot: "#0D9488" },
+                    warning: { bg: "rgba(217,119,6,0.07)", border: "rgba(217,119,6,0.2)", icon: <AlertCircle className="w-3 h-3 text-amber-600" />, dot: "#D97706" },
+                    success: { bg: "rgba(5,150,105,0.07)", border: "rgba(5,150,105,0.2)", icon: <CheckCircle className="w-3 h-3 text-emerald-600" />, dot: "#059669" },
+                  }[a.type] ?? { bg: "", border: "", icon: null, dot: "" };
+                  return (
+                    <div
+                      key={a.id}
+                      className="p-3 rounded-lg"
+                      style={{ background: styles.bg, border: `1px solid ${styles.border}` }}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5" style={{ background: `${styles.dot}20` }}>
+                          {styles.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] font-semibold text-foreground leading-tight">{a.title}</div>
+                          <div className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{a.desc}</div>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{a.date}</span>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-semibold text-foreground leading-tight">{a.title}</div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{a.desc}</div>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground shrink-0">{a.date}</span>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

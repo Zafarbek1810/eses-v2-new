@@ -70,6 +70,97 @@ export function resolveResultOrderId(
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function readPositiveId(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function isOrderShaped(obj: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(obj.items) ||
+    Array.isArray(obj.orderItems) ||
+    Array.isArray(obj.order_items) ||
+    obj.patient != null ||
+    obj.order_type != null ||
+    obj.orderType != null ||
+    obj.payment_status != null ||
+    obj.payment_method != null
+  );
+}
+
+function isResultShaped(obj: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(obj.result_item) ||
+    Array.isArray(obj.result_items) ||
+    Array.isArray(obj.resultItems) ||
+    obj.order_id != null ||
+    obj.orderId != null ||
+    obj.lab_director_id != null
+  );
+}
+
+/**
+ * Result qatorining o'z id si.
+ * Ba'zi javoblarda `id` buyurtma id si bilan bir xil keladi yoki `data` ichidagi order uni bosib qo'yadi.
+ */
+export function resolveDistinctResultId(
+  record: ResultRecord | null | undefined,
+  orderId?: number | null,
+): number | null {
+  if (!record) return null;
+  const bag = record as Record<string, unknown>;
+  const order = orderId ?? resolveResultOrderId(record);
+  const accept = (value: unknown): number | null => {
+    const n = readPositiveId(value);
+    if (n == null) return null;
+    if (order != null && n === order) return null;
+    return n;
+  };
+
+  const explicit = accept(bag.result_id) ?? accept(bag.resultId);
+  if (explicit) return explicit;
+
+  for (const key of ["result", "data"] as const) {
+    const nested = bag[key];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) continue;
+    const obj = nested as Record<string, unknown>;
+    if (isOrderShaped(obj) && !isResultShaped(obj)) continue;
+    const nestedOrder = readPositiveId(obj.order_id ?? obj.orderId);
+    if (order != null && nestedOrder != null && nestedOrder !== order) continue;
+    const nestedId = accept(obj.id);
+    if (nestedId) return nestedId;
+  }
+
+  return accept(record.id);
+}
+
+function findResultIdInPayload(raw: unknown, orderId: number, depth = 0): number | null {
+  if (depth > 5 || !raw || typeof raw !== "object") return null;
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const found = findResultIdInPayload(item, orderId, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  const obj = raw as Record<string, unknown>;
+  const id = readPositiveId(obj.id);
+  const linked = readPositiveId(obj.order_id ?? obj.orderId);
+  const hasResultItems =
+    Array.isArray(obj.result_item) ||
+    Array.isArray(obj.result_items) ||
+    Array.isArray(obj.resultItems);
+  if (id && id !== orderId && (linked === orderId || (hasResultItems && linked == null && !isOrderShaped(obj)))) {
+    return id;
+  }
+  for (const value of Object.values(obj)) {
+    if (!value || typeof value !== "object") continue;
+    const found = findResultIdInPayload(value, orderId, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function resolveResultItemAnalysisId(
   item: Pick<ResultItemPayload, "analysis_id" | "analysisId" | "analysis"> &
     Record<string, unknown>,
@@ -208,14 +299,28 @@ function normalizeResultRecord(raw: unknown): ResultRecord | null {
   const inner = obj.data ?? obj.result ?? obj.item;
   if (inner && typeof inner === "object" && !Array.isArray(inner)) {
     const nested = inner as ResultRecord;
+    const nestedBag = nested as Record<string, unknown>;
     const nestedItems = getResultItems(nested);
-    // Nested entity + tashqi envelope dagi itemlarni birlashtiramiz
-    // (ba'zi API lar id ni data ichida, result_item ni tashqarida qaytaradi)
-    if (nested.id != null || nestedItems.length > 0 || outerItems.length > 0) {
+    const outerId = Number(rec.id);
+    const nestedId = Number(nested.id);
+    const nestedIsOrder = isOrderShaped(nestedBag);
+    const nestedIsResult = isResultShaped(nestedBag);
+    // `data` ba'zan buyurtmaning o'zi. Uni result ustiga yoyib id ni almashtirmaymiz.
+    if (nestedIsOrder && !nestedIsResult) {
+      rec = raw as ResultRecord;
+    } else if (nested.id != null || nestedItems.length > 0 || outerItems.length > 0) {
       const mergedItems = nestedItems.length > 0 ? nestedItems : outerItems;
+      const keepOuterId =
+        Number.isFinite(outerId) &&
+        outerId > 0 &&
+        Number.isFinite(nestedId) &&
+        nestedId > 0 &&
+        nestedIsOrder &&
+        isResultShaped(raw as Record<string, unknown>);
       rec = {
         ...(raw as ResultRecord),
         ...nested,
+        ...(keepOuterId ? { id: outerId } : {}),
         result_item: mergedItems,
       };
       outerItems = mergedItems;
@@ -320,12 +425,13 @@ export async function getResultByIdTwo(orderId: number, options?: { auth?: boole
       list[0] ??
       null;
     if (richer) {
-      if (!normalized) return richer;
-      if (getResultItems(normalized).length === 0 && getResultItems(richer).length > 0) {
-        return {
+      if (!normalized) {
+        normalized = richer;
+      } else if (getResultItems(normalized).length === 0 && getResultItems(richer).length > 0) {
+        normalized = {
           ...normalized,
           ...richer,
-          id: normalized.id || richer.id,
+          id: resolveDistinctResultId(richer, orderId) ?? resolveDistinctResultId(normalized, orderId) ?? richer.id ?? normalized.id,
           order_id: resolveResultOrderId(normalized) ?? resolveResultOrderId(richer) ?? orderId,
           result_item: getResultItems(richer),
         };
@@ -336,6 +442,38 @@ export async function getResultByIdTwo(orderId: number, options?: { auth?: boole
   if (!normalized) {
     throw new Error("Natijani yuklab bo'lmadi");
   }
+
+  const distinct =
+    resolveDistinctResultId(normalized, orderId) ?? findResultIdInPayload(raw, orderId);
+  if (distinct) {
+    return {
+      ...normalized,
+      id: distinct,
+      order_id: resolveResultOrderId(normalized) ?? orderId,
+    };
+  }
+
+  // Javobdagi id buyurtma id si bo'lib qolgan. Haqiqiy result id boshqa qatorda.
+  if (normalized.id === orderId || normalized.id == null) {
+    try {
+      const all = await getAllResults({ auth: options?.auth ?? false });
+      const found = findResultByOrderId(all, orderId);
+      const foundId = resolveDistinctResultId(found, orderId);
+      if (found && foundId) {
+        const items = getResultItems(normalized);
+        return {
+          ...found,
+          ...normalized,
+          id: foundId,
+          order_id: orderId,
+          result_item: items.length > 0 ? items : getResultItems(found),
+        };
+      }
+    } catch {
+      /* ro'yxat bo'lmasa order id ni result id qilib ko'rsatmaymiz */
+    }
+  }
+
   return normalized;
 }
 

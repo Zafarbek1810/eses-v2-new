@@ -1,7 +1,7 @@
 import { apiRequest } from "./client";
 
 export type OrderType = "patient" | "sample" | "course";
-export type PaymentMethod = "cash" | "card" | "click";
+export type PaymentMethod = "cash" | "card" | "click" | "transfer";
 export type PaymentStatus = "pending" | "paid" | "refunded";
 export type OrderStatus = "pending" | "partially_completed" | "completed" | "canceled";
 export type OrderItemStatus = "pending" | "in_progress" | "completed" | "canceled";
@@ -315,6 +315,46 @@ export async function getOrdersFull(
   return normalizeFullResponse(raw, params);
 }
 
+/** Laboratoriya natijasi emas, buyurtma ekanini ajratadi. `result.id` order id emas. */
+function isOrderEntity(value: unknown): boolean {
+  const obj = asRecord(value);
+  if (!obj) return false;
+  const id = Number(obj.id);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  const hasOrderItems =
+    Array.isArray(obj.items) ||
+    Array.isArray(obj.orderItems) ||
+    Array.isArray(obj.order_items);
+  if (
+    hasOrderItems ||
+    obj.patient != null ||
+    obj.order_type != null ||
+    obj.orderType != null ||
+    obj.payment_status != null ||
+    obj.payment_method != null
+  ) {
+    return true;
+  }
+  const hasResultItems =
+    Array.isArray(obj.result_item) ||
+    Array.isArray(obj.result_items) ||
+    Array.isArray(obj.resultItems);
+  if (hasResultItems && (obj.order_id != null || obj.orderId != null)) return false;
+  return false;
+}
+
+function pickOrderPayload(raw: unknown): unknown {
+  const obj = asRecord(raw);
+  if (!obj) return raw;
+  const data = asRecord(obj.data);
+  const candidates = [obj.data, obj.order, data?.order, data?.data, raw, obj.result, data?.result];
+  for (const candidate of candidates) {
+    const value = Array.isArray(candidate) ? candidate[0] : candidate;
+    if (isOrderEntity(value)) return value;
+  }
+  return raw;
+}
+
 export async function getOrderById(id: number, options?: { auth?: boolean }) {
   const raw = await apiRequest<unknown>(`/order/getby/${id}`, {
     method: "GET",
@@ -322,16 +362,16 @@ export async function getOrderById(id: number, options?: { auth?: boolean }) {
     fallbackError: "Buyurtmani yuklab bo'lmadi",
   });
   const obj = asRecord(raw);
-  const inner = obj ? (obj.data ?? obj.order ?? obj.result ?? raw) : raw;
-  const candidate = Array.isArray(inner) ? inner[0] : inner;
+  const candidate = pickOrderPayload(raw);
   const normalized = normalizeOrder(candidate) ?? normalizeOrder(raw);
   if (!normalized) throw new Error("Buyurtmani yuklab bo'lmadi");
-  if (normalized.items?.length) return normalized;
+  const order = normalized.id === id ? normalized : { ...normalized, id };
+  if (order.items?.length) return order;
   const envelopeItems =
     normalizeOrderItems(asRecord(candidate) ?? {}) ??
-    normalizeOrderItems(asRecord(inner) ?? {}) ??
-    normalizeOrderItems(obj ?? {});
-  return envelopeItems?.length ? { ...normalized, items: envelopeItems } : normalized;
+    normalizeOrderItems(obj ?? {}) ??
+    normalizeOrderItems(asRecord(obj?.data) ?? {});
+  return envelopeItems?.length ? { ...order, items: envelopeItems } : order;
 }
 
 /** SMS / public link — token talab qilinmaydi */

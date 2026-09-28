@@ -8,7 +8,6 @@ import { copyTextToClipboard } from "@/lib/copyText";
 import {
   getOrderById,
   resolveOrderItemAnalysisId,
-  updateOrder,
   updateOrderItemStatus,
   updateOrderStatus,
   type Order,
@@ -22,6 +21,7 @@ import {
   getResultById,
   getResultByIdTwo,
   getResultItems,
+  resolveDistinctResultId,
   GRID_TEMPLATE_ID_KEY,
   resolveResultItemAnalysisId,
   type ResultRecord,
@@ -184,39 +184,50 @@ function hasSavedGrid(rec: ResultRecord | null | undefined) {
 
 async function loadSavedResult(order: Order, orderId: number): Promise<ResultRecord | null> {
   let resultRec = resultFromOrder(order);
+  const embeddedResultId = resolveDistinctResultId(resultRec, orderId);
 
-  if (!hasSavedGrid(resultRec) && resultRec?.id) {
+  // result/getby ga faqat result id ketadi. Order id bilan chaqirilmaydi.
+  if (!hasSavedGrid(resultRec) && embeddedResultId) {
     try {
-      const full = await getResultById(resultRec.id);
-      if (full && hasSavedGrid(full)) resultRec = full;
+      const full = await getResultById(embeddedResultId);
+      if (full && hasSavedGrid(full)) resultRec = { ...full, id: embeddedResultId };
     } catch {
       /* buyurtma ichidagi yozuv yetarli bo'lishi mumkin */
     }
   }
 
-  if (!hasSavedGrid(resultRec)) {
+  if (!hasSavedGrid(resultRec) || !resolveDistinctResultId(resultRec, orderId)) {
     try {
       const byOrder = await getResultByIdTwo(orderId);
-      if (byOrder && hasSavedGrid(byOrder)) resultRec = byOrder;
-      else if (!resultRec && byOrder) resultRec = byOrder;
+      const byOrderId = resolveDistinctResultId(byOrder, orderId);
+      if (byOrder && hasSavedGrid(byOrder)) resultRec = byOrderId ? { ...byOrder, id: byOrderId } : byOrder;
+      else if (!resultRec && byOrder) resultRec = byOrderId ? { ...byOrder, id: byOrderId } : byOrder;
+      else if (byOrderId && resultRec && !resolveDistinctResultId(resultRec, orderId)) {
+        resultRec = { ...resultRec, id: byOrderId, order_id: orderId };
+      }
     } catch {
       /* public getbytwo bo'sh bo'lsa ro'yxatdan qidiramiz */
     }
   }
 
-  if (!hasSavedGrid(resultRec)) {
+  if (!hasSavedGrid(resultRec) || !resolveDistinctResultId(resultRec, orderId)) {
     try {
       const all = await getAllResults();
       const found = findResultByOrderId(all, orderId);
-      if (found && hasSavedGrid(found)) {
-        resultRec = found;
-      } else if (found?.id) {
+      const foundId = resolveDistinctResultId(found, orderId);
+      if (foundId) {
         try {
-          const full = await getResultById(found.id);
-          if (full && hasSavedGrid(full)) resultRec = full;
-          else if (!hasSavedGrid(resultRec)) resultRec = resultRec ?? found;
+          const full = await getResultById(foundId);
+          if (full && (hasSavedGrid(full) || !hasSavedGrid(resultRec))) {
+            resultRec = { ...full, id: foundId, order_id: orderId };
+          } else if (resultRec) {
+            resultRec = { ...resultRec, id: foundId, order_id: orderId };
+          } else {
+            resultRec = full ? { ...full, id: foundId } : { ...found!, id: foundId };
+          }
         } catch {
-          if (!resultRec) resultRec = found;
+          if (resultRec) resultRec = { ...resultRec, id: foundId, order_id: orderId };
+          else if (found) resultRec = { ...found, id: foundId };
         }
       }
     } catch {
@@ -385,7 +396,7 @@ export function OrderResultsReview({
           dynamicCtx: {
             orderId,
             orderCreatedAt: item.createdAt || orderData.createdAt || null,
-            resultId: resultRec?.id ?? null,
+            resultId: resolveDistinctResultId(resultRec, orderId),
             resultDate: resultRec?.updatedAt || resultRec?.createdAt || new Date().toISOString(),
             patientFullName: patientName(orderData.patient, orderData.name),
             patientAddress: buildAddress(orderData, orderData.patient),
@@ -424,8 +435,21 @@ export function OrderResultsReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
+  const analysesReady =
+    views.length > 0 &&
+    views.every(
+      v => v.itemStatus === "completed" || v.itemStatus === "canceled" || v.hasSavedValues,
+    );
+
   const handleConfirm = async () => {
     if (!order || confirming) return;
+    if (!analysesReady) {
+      pushToast(
+        "Avval Natijalar sahifasida analiz natijalarini saqlang. Analiz holati Yakunlangan bo‘lgach buyurtmani tasdiqlash mumkin",
+        "error",
+      );
+      return;
+    }
     setConfirming(true);
     try {
       const role = normalizeRoleName(getStoredUser()?.role?.name);
@@ -455,41 +479,19 @@ export function OrderResultsReview({
         }
       }
 
-      const resultLinks = views
-        .filter(v => v.template?.storageId != null && v.template.storageId > 0)
-        .map(v =>
-          buildShowResultUrl({
-            orderId: order.id,
-            analysisId: v.analysisId,
-            storageId: v.template!.storageId!,
-          }),
-        );
-      const result_link_sms = resultLinks[0] ?? "";
-
-      let smsOk = true;
-      try {
-        await updateOrder(order.id, {
-          completed_sms: true,
-          ...(result_link_sms ? { result_link_sms } : {}),
-        });
-      } catch {
-        smsOk = false;
-      }
-
       const completedIds = new Set(itemsToComplete.map(i => i.id));
       const allDone = allItems.every(item => {
         if (completedIds.has(item.id)) return true;
         const st = String(item.status || "");
         return st === "completed" || st === "canceled";
       });
-      await updateOrderStatus(order.id, allDone ? "completed" : "partially_completed");
 
-      const msg = allDone
-        ? smsOk
-          ? "Buyurtma yakunlandi. SMS yuborildi"
-          : "Buyurtma yakunlandi, lekin SMS yuborib bo'lmadi"
-        : "Laboratoriya analizlari tasdiqlandi";
-      onConfirmed?.(msg, allDone && smsOk ? "success" : "info");
+      await updateOrderStatus(orderId, allDone ? "completed" : "partially_completed");
+
+      onConfirmed?.(
+        allDone ? "Buyurtma tasdiqlandi" : "Laboratoriya analizlari tasdiqlandi",
+        "success",
+      );
     } catch (err) {
       pushToast(
         err instanceof ApiError ? err.message : "Buyurtmani tasdiqlab bo'lmadi",
@@ -603,7 +605,9 @@ export function OrderResultsReview({
             <p className="text-[12px] text-muted-foreground mt-0.5">
               {isCompleted
                 ? "Holat: Yakunlangan. Bemorga completed SMS yuborilgan."
-                : "Natijalarni ko‘rib chiqing va buyurtmani yakunlang — bemorga SMS yuboriladi."}
+                : analysesReady
+                  ? "Analiz holati Yakunlangan — natija kiritilgan. Buyurtmani tasdiqlang."
+                  : "Natijalar sahifasida natijani saqlang. Analiz holati Yakunlangan bo‘lgach buyurtmani tasdiqlash mumkin."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -623,7 +627,7 @@ export function OrderResultsReview({
             {!isCompleted && (
               <button
                 type="button"
-                disabled={confirming || loading}
+                disabled={confirming || loading || !analysesReady}
                 onClick={() => void handleConfirm()}
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-[14px] font-bold text-white shadow-md hover:opacity-95 disabled:opacity-50 min-w-[220px]"
                 style={{ background: primaryColor }}

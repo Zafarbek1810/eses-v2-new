@@ -12,6 +12,8 @@ import {
   getOrderById,
   resolveOrderItemAnalysisId,
   resolveOrderType,
+  updateOrderItemStatus,
+  updateOrderStatus,
   type Order,
   type OrderItem,
   type OrderPatient,
@@ -119,6 +121,7 @@ type OrderAnalysisRow = {
   laboratoryName: string;
   laboratoryId: number | null;
   itemStatus: string;
+  orderStatus: string;
   patientName: string;
   orderType: string;
   orderCreatedAt?: string;
@@ -178,6 +181,7 @@ function flattenOrderAnalyses(
         laboratoryName: item.laboratory?.name ?? "—",
         laboratoryId: item.laboratory?.id ?? null,
         itemStatus: String(item.status || "pending"),
+        orderStatus: String(order.status || "pending"),
         patientName: patientNameFromOrder(order.patient, order.name),
         orderType: resolveOrderType(order),
         orderCreatedAt: item.createdAt || order.createdAt,
@@ -830,6 +834,19 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       };
 
       const savedId = cached.id;
+      if (
+        selected.orderItemId > 0 &&
+        selected.itemStatus !== "completed" &&
+        selected.itemStatus !== "canceled"
+      ) {
+        await updateOrderItemStatus(selected.orderItemId, "completed");
+        // Item holati o'zgarsa server buyurtmani ham yakunlab qo'yadi.
+        // Buyurtma holati faqat laboratoriya mudiri tasdiqlaganda o'zgaradi.
+        if (selected.orderStatus && selected.orderStatus !== "completed") {
+          await updateOrderStatus(selected.orderId, selected.orderStatus);
+        }
+      }
+
       setResultsCache(list => {
         const without = list.filter(
           r => r.id !== savedId && findResultByOrderId([r], selected.orderId) == null,
@@ -843,17 +860,30 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               ...r,
               resultId: savedId,
               hasSavedValues: r.analysisId === selected.analysisId ? true : r.hasSavedValues,
+              itemStatus:
+                r.orderItemId === selected.orderItemId && r.itemStatus !== "canceled"
+                  ? "completed"
+                  : r.itemStatus,
             }
             : r,
         ),
       );
       setSelected(s =>
         s
-          ? { ...s, resultId: savedId, hasSavedValues: true }
+          ? {
+            ...s,
+            resultId: savedId,
+            hasSavedValues: true,
+            itemStatus: s.itemStatus === "canceled" ? s.itemStatus : "completed",
+          }
           : s,
       );
 
-      pushToast(existing?.id ? "Natija yangilandi" : "Natija saqlandi");
+      pushToast(
+        existing?.id
+          ? "Natija yangilandi. Analiz holati: Yakunlangan"
+          : "Natija saqlandi. Analiz holati: Yakunlangan",
+      );
       return true;
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Saqlab bo'lmadi", "error");

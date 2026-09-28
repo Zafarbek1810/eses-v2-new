@@ -1305,6 +1305,10 @@ const Dashboard = ({
           patientId={orderPatientId}
           onPatientChange={setOrderPatientId}
           onEditPatient={handleEditPatient}
+          onGoToResults={() => {
+            setOrderPatientId(null);
+            setActiveNav("results");
+          }}
         />
       );
     }

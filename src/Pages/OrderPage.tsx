@@ -141,6 +141,7 @@ const PAYMENT_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Naqd" },
   { value: "card", label: "Karta" },
   { value: "click", label: "Click" },
+  { value: "transfer", label: "Hisobdan o'tkazish" },
 ];
 
 type KassaMode = "patient" | "organization";
@@ -686,11 +687,13 @@ export function OrderPage({
   patientId,
   onPatientChange,
   onEditPatient,
+  onGoToResults,
 }: {
   primaryColor: string;
   patientId: number | null;
   onPatientChange: (patientId: number | null) => void;
   onEditPatient?: (patientId: number) => void;
+  onGoToResults?: () => void;
 }) {
   const [kassaMode, setKassaMode] = useState<KassaMode>("patient");
   const [organizationName, setOrganizationName] = useState("");
@@ -712,7 +715,6 @@ export function OrderPage({
 
   const [items, setItems] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
-  const [paymentPickerOpen, setPaymentPickerOpen] = useState(false);
   const [discountPercent, setDiscountPercent] = useState("");
   const [sendSms, setSendSms] = useState(true);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
@@ -724,6 +726,7 @@ export function OrderPage({
   const [paidAmount, setPaidAmount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const createdOrderIdRef = useRef<number | null>(null);
+  const [createdOrderId, setCreatedOrderId] = useState<number | null>(null);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [removeTargetKey, setRemoveTargetKey] = useState<string | null>(null);
   const [pdfTemplates, setPdfTemplates] = useState<PdfTemplate[]>([]);
@@ -740,7 +743,6 @@ export function OrderPage({
   const resetOrderForm = () => {
     setItems([]);
     setPaymentMethod(null);
-    setPaymentPickerOpen(false);
     setDiscountPercent("");
     setSendSms(true);
     setAnalysisModalOpen(false);
@@ -751,6 +753,7 @@ export function OrderPage({
     setPaymentPaid(false);
     setPaidAmount(0);
     createdOrderIdRef.current = null;
+    setCreatedOrderId(null);
     setSelectedTemplateByKey({});
     setFillByKey({});
   };
@@ -954,8 +957,11 @@ export function OrderPage({
     return Math.max(0, Math.round(totalPrice * (1 - parsedDiscount / 100)));
   }, [totalPrice, parsedDiscount]);
 
-  const paymentLabel =
-    PAYMENT_OPTIONS.find(o => o.value === paymentMethod)?.label ?? null;
+  const invalidatePayment = () => {
+    setPaymentPaid(false);
+    setPaymentMethod(null);
+    setPaidAmount(0);
+  };
 
   const handleAddAnalysis = (newItems: Omit<CartItem, "key" | "status">[]) => {
     if (newItems.length === 0) return;
@@ -968,7 +974,7 @@ export function OrderPage({
       })),
     ]);
     setAnalysisModalOpen(false);
-    setPaymentPaid(false);
+    invalidatePayment();
     pushToast(
       newItems.length === 1
         ? "Analiz qo'shildi"
@@ -977,9 +983,21 @@ export function OrderPage({
     );
   };
 
+  const handleItemPriceChange = (key: string, raw: string) => {
+    const n = Number(raw);
+    setItems(list =>
+      list.map(item =>
+        item.key === key
+          ? { ...item, price: Number.isFinite(n) && n >= 0 ? n : 0 }
+          : item,
+      ),
+    );
+    // Narx tahriri to'lovni bekor qilmasin — tashkilotda narx alohida kiritiladi
+  };
+
   const handleRemoveItem = (key: string) => {
     setItems(list => list.filter(i => i.key !== key));
-    setPaymentPaid(false);
+    invalidatePayment();
     setRemoveTargetKey(null);
     setSelectedTemplateByKey(prev => {
       if (!(key in prev)) return prev;
@@ -1068,7 +1086,7 @@ export function OrderPage({
       }
     }
     if (!paymentMethod) {
-      pushToast("To'lov turini tanlang", "info");
+      pushToast("Avval to'lov qiling", "info");
       return null;
     }
 
@@ -1114,6 +1132,7 @@ export function OrderPage({
     }
 
     createdOrderIdRef.current = id;
+    setCreatedOrderId(id);
 
     if (isOrg) {
       const resultItems = items
@@ -1156,8 +1175,20 @@ export function OrderPage({
     return id;
   };
 
+  const finishAndGoToResults = () => {
+    setReceiptOpen(false);
+    setReceiptLinks([]);
+    if (kassaMode === "patient") {
+      onPatientChange(null);
+    } else {
+      setOrganizationName("");
+    }
+    resetOrderForm();
+    onGoToResults?.();
+  };
+
   const openReceipt = async () => {
-    if (receiptLoading) return;
+    if (receiptLoading || submitting) return;
     setReceiptLoading(true);
     try {
       const orderId = await persistOrder();
@@ -1170,6 +1201,7 @@ export function OrderPage({
       ).catch(() => pdfTemplates);
       setReceiptLinks(buildReceiptQrLinks(orderId, items, templates));
       setReceiptOpen(true);
+      pushToast("Buyurtma yaratildi. Chek chiqarildi", "success");
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Chek ochib bo'lmadi", "error");
     } finally {
@@ -1178,6 +1210,10 @@ export function OrderPage({
   };
 
   const handleSubmit = async () => {
+    if (createdOrderIdRef.current != null) {
+      finishAndGoToResults();
+      return;
+    }
     setSubmitting(true);
     try {
       const created = await persistOrder();
@@ -1191,13 +1227,8 @@ export function OrderPage({
         "success",
       );
       setTimeout(() => {
-        if (kassaMode === "patient") {
-          clearPatient();
-          return;
-        }
-        setOrganizationName("");
-        resetOrderForm();
-      }, 900);
+        finishAndGoToResults();
+      }, 600);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Order yaratib bo'lmadi", "error");
     } finally {
@@ -1611,9 +1642,6 @@ export function OrderPage({
                       Chegirma
                     </th>
                     <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      To&apos;lov turi
-                    </th>
-                    <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                       To&apos;lov qilish
                     </th>
                     <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1698,14 +1726,27 @@ export function OrderPage({
                         {items.length === 0 ? (
                           <span className="text-[12px] text-muted-foreground">—</span>
                         ) : (
-                          items.map(item => (
-                            <div
-                              key={item.key}
-                              className="rounded-xl bg-secondary/60 px-3 py-2 text-[13px] font-medium text-foreground"
-                            >
-                              {formatPrice(item.price)}
-                            </div>
-                          ))
+                          items.map(item =>
+                            kassaMode === "organization" ? (
+                              <input
+                                key={item.key}
+                                type="number"
+                                min={0}
+                                step="any"
+                                value={item.price || ""}
+                                onChange={e => handleItemPriceChange(item.key, e.target.value)}
+                                placeholder="0"
+                                className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] font-medium text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)]"
+                              />
+                            ) : (
+                              <div
+                                key={item.key}
+                                className="rounded-xl bg-secondary/60 px-3 py-2 text-[13px] font-medium text-foreground"
+                              >
+                                {formatPrice(item.price)}
+                              </div>
+                            ),
+                          )
                         )}
                         {items.length > 0 && (
                           <p className="text-[12px] font-semibold pt-1" style={{ color: primaryColor }}>
@@ -1725,7 +1766,7 @@ export function OrderPage({
                           value={discountPercent}
                           onChange={e => {
                             setDiscountPercent(e.target.value);
-                            setPaymentPaid(false);
+                            invalidatePayment();
                           }}
                           placeholder="0"
                           className="w-full bg-secondary border border-border rounded-xl px-3 py-2 pr-8 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)]"
@@ -1736,54 +1777,15 @@ export function OrderPage({
                       </div>
                     </td>
 
-                    <td className="px-4 py-4 border-b border-border min-w-[160px]">
-                      <div className="space-y-2">
-                        {paymentMethod && (
-                          <div className="rounded-xl bg-secondary/60 px-3 py-2 text-[13px] font-medium text-foreground">
-                            {paymentLabel}
-                          </div>
-                        )}
-                        {paymentPickerOpen ? (
-                          <select
-                            autoFocus
-                            value={paymentMethod ?? ""}
-                            onChange={e => {
-                              const v = e.target.value as PaymentMethod;
-                              if (v) {
-                                setPaymentMethod(v);
-                                setPaymentPickerOpen(false);
-                                setPaymentPaid(false);
-                              }
-                            }}
-                            onBlur={() => {
-                              if (paymentMethod) setPaymentPickerOpen(false);
-                            }}
-                            className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]"
-                          >
-                            <option value="">Tanlang</option>
-                            {PAYMENT_OPTIONS.map(o => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setPaymentPickerOpen(true)}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold border border-dashed border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            {paymentMethod ? "O'zgartirish" : "To'lov turi"}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-
                     <td className="px-4 py-4 border-b border-border min-w-[140px]">
                       <div className="space-y-2">
                         {paymentPaid ? (
                           <>
                             <div className="rounded-xl px-3 py-2 text-[12px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
                               {statusLabel("paid")}
+                              {paymentMethod
+                                ? ` · ${PAYMENT_OPTIONS.find(o => o.value === paymentMethod)?.label ?? paymentMethod}`
+                                : ""}
                             </div>
                             <p className="text-[11px] text-muted-foreground">
                               {formatPrice(paidAmount)}
@@ -1811,9 +1813,9 @@ export function OrderPage({
                           items.map(item => (
                             <div
                               key={item.key}
-                              className="rounded-xl px-3 py-2 text-[12px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                              className="rounded-xl px-3 py-2 text-[12px] font-medium bg-secondary/60 text-muted-foreground"
                             >
-                              {statusLabel(item.status)}
+                              Buyurtmadan keyin
                             </div>
                           ))
                         )}
@@ -1868,7 +1870,8 @@ export function OrderPage({
             />
           )}
 
-          <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-3">
             <button
               type="button"
               onClick={() => {
@@ -1903,6 +1906,7 @@ export function OrderPage({
                 Chek
               </button>
             )}
+            {!createdOrderId && (
             <button
               type="button"
               onClick={() => void handleSubmit()}
@@ -1910,6 +1914,7 @@ export function OrderPage({
                 submitting
                 || receiptLoading
                 || items.length === 0
+                || !paymentPaid
                 || !paymentMethod
                 || (kassaMode === "organization" && !organizationName.trim())
               }
@@ -1923,6 +1928,22 @@ export function OrderPage({
               )}
               Buyurtma yaratish
             </button>
+            )}
+            </div>
+            {!submitting && items.length > 0 && !createdOrderId && (
+              <p className="text-[12px] text-muted-foreground text-right max-w-md">
+                {kassaMode === "organization" && !organizationName.trim()
+                  ? "Avval tashkilot nomini kiriting"
+                  : !paymentPaid
+                    ? "Avval «To'lov qilish» orqali to'lovni tasdiqlang"
+                    : "Chek bosilsa buyurtma yaratiladi; yoki «Buyurtma yaratish» ni bosing"}
+              </p>
+            )}
+            {createdOrderId && !receiptOpen && (
+              <p className="text-[12px] text-muted-foreground text-right max-w-md">
+                Buyurtma #{createdOrderId} yaratildi. Chekni yoping — Natijalar sahifasiga o&apos;tasiz
+              </p>
+            )}
           </div>
         </>
       ) : null}
@@ -1963,7 +1984,13 @@ export function OrderPage({
           discountPercent={parsedDiscount}
           totalBeforeDiscount={totalPrice}
           resultLinks={receiptLinks}
-          onClose={() => setReceiptOpen(false)}
+          onClose={() => {
+            if (createdOrderIdRef.current != null) {
+              finishAndGoToResults();
+              return;
+            }
+            setReceiptOpen(false);
+          }}
         />
       )}
 
