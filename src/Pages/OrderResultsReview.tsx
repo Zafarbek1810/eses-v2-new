@@ -17,8 +17,13 @@ import {
 } from "@/api/order";
 import {
   decodeGridFillFromItems,
+  findResultByOrderId,
+  getAllResults,
   getResultById,
+  getResultByIdTwo,
   getResultItems,
+  GRID_TEMPLATE_ID_KEY,
+  resolveResultItemAnalysisId,
   type ResultRecord,
 } from "@/api/result";
 import { getStoredCompanyId, getStoredUser } from "@/api/session";
@@ -94,12 +99,29 @@ function bindTemplateToAnalysis(
   return cloned;
 }
 
+function templateMatchesId(template: PdfTemplate, preferredId?: string | null) {
+  if (!preferredId) return false;
+  const raw = String(preferredId).trim();
+  if (!raw) return false;
+  if (template.id === raw) return true;
+  const storageId = String(template.storageId ?? "");
+  return Boolean(
+    storageId &&
+      (storageId === raw || template.id === `storage-${raw}` || raw === `storage-${storageId}`),
+  );
+}
+
 function resolveTemplateForAnalysis(
   analysisId: number,
   analysisName: string,
   list: PdfTemplate[],
+  preferredId?: string | null,
 ): PdfTemplate | null {
+  const preferred = preferredId
+    ? list.find(t => templateMatchesId(t, preferredId))
+    : null;
   const base =
+    preferred ||
     list.find(t => t.analysisId === analysisId) ||
     list.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
     list.find(t => t.elements.some(el => el.type === "table")) ||
@@ -120,35 +142,110 @@ function seedFillFromTemplate(
   for (let r = 0; r < grid.headerRows; r++) {
     for (let c = 0; c < grid.cols; c++) {
       const cell = grid.headerCells[r][c];
-      if (cell.covered || !isDynamicCell(cell)) continue;
+      if (cell.covered) continue;
       const key = headerCellKey(r, c);
-      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
-        ? String(saved[key] ?? "")
-        : "";
+      const hasSaved = Object.prototype.hasOwnProperty.call(saved, key);
+      if (!isDynamicCell(cell) && !hasSaved) continue;
+      next[key] = hasSaved ? String(saved[key] ?? "") : "";
     }
   }
 
   for (let r = 0; r < grid.bodyRows; r++) {
     for (let c = 0; c < grid.cols; c++) {
       const cell = grid.bodyCells[r][c];
-      if (cell.covered || !isDynamicCell(cell)) continue;
+      if (cell.covered) continue;
       const key = bodyCellKey(r, c);
-      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
-        ? String(saved[key] ?? "")
-        : "";
+      const hasSaved = Object.prototype.hasOwnProperty.call(saved, key);
+      if (!isDynamicCell(cell) && !hasSaved) continue;
+      next[key] = hasSaved ? String(saved[key] ?? "") : "";
+    }
+  }
+
+  // Jadval kalitlaridan tashqari: overlay yozuvlar va saqlangan shablon id
+  for (const [k, v] of Object.entries(saved)) {
+    if (!Object.prototype.hasOwnProperty.call(next, k)) {
+      next[k] = String(v ?? "");
     }
   }
   return next;
 }
 
+function hasSavedGrid(rec: ResultRecord | null | undefined) {
+  const items = getResultItems(rec);
+  if (items.length === 0) return false;
+  const ids = new Set<number>();
+  for (const item of items) {
+    const id = resolveResultItemAnalysisId(item);
+    if (id) ids.add(id);
+  }
+  const probe = ids.size > 0 ? [...ids] : [0];
+  return probe.some(id => Object.keys(decodeGridFillFromItems(items, id)).length > 0);
+}
+
+async function loadSavedResult(order: Order, orderId: number): Promise<ResultRecord | null> {
+  let resultRec = resultFromOrder(order);
+
+  if (!hasSavedGrid(resultRec) && resultRec?.id) {
+    try {
+      const full = await getResultById(resultRec.id);
+      if (full && hasSavedGrid(full)) resultRec = full;
+    } catch {
+      /* buyurtma ichidagi yozuv yetarli bo'lishi mumkin */
+    }
+  }
+
+  if (!hasSavedGrid(resultRec)) {
+    try {
+      const byOrder = await getResultByIdTwo(orderId);
+      if (byOrder && hasSavedGrid(byOrder)) resultRec = byOrder;
+      else if (!resultRec && byOrder) resultRec = byOrder;
+    } catch {
+      /* public getbytwo bo'sh bo'lsa ro'yxatdan qidiramiz */
+    }
+  }
+
+  if (!hasSavedGrid(resultRec)) {
+    try {
+      const all = await getAllResults();
+      const found = findResultByOrderId(all, orderId);
+      if (found && hasSavedGrid(found)) {
+        resultRec = found;
+      } else if (found?.id) {
+        try {
+          const full = await getResultById(found.id);
+          if (full && hasSavedGrid(full)) resultRec = full;
+          else if (!hasSavedGrid(resultRec)) resultRec = resultRec ?? found;
+        } catch {
+          if (!resultRec) resultRec = found;
+        }
+      }
+    } catch {
+      /* natija topilmasa shablon bo'sh ko'rsatiladi */
+    }
+  }
+
+  return resultRec;
+}
+
 function resultFromOrder(order: Order): ResultRecord | null {
   const bag = order as Record<string, unknown>;
-  const embedded = bag.result ?? bag.results;
+  const embedded =
+    bag.result ?? bag.results ?? bag.result_item ?? bag.result_items;
   if (Array.isArray(embedded)) {
     const withItems = embedded.find(
       entry => entry && typeof entry === "object" && getResultItems(entry as ResultRecord).length > 0,
     );
-    return (withItems as ResultRecord | undefined) ?? (embedded[0] as ResultRecord | undefined) ?? null;
+    if (withItems) return withItems as ResultRecord;
+    const looksLikeItems = embedded.some(
+      entry =>
+        entry &&
+        typeof entry === "object" &&
+        ("normValue" in (entry as object) ||
+          "norm_value" in (entry as object) ||
+          "name" in (entry as object)),
+    );
+    if (looksLikeItems) return { result_item: embedded } as ResultRecord;
+    return (embedded[0] as ResultRecord | undefined) ?? null;
   }
   if (embedded && typeof embedded === "object") return embedded as ResultRecord;
   return null;
@@ -224,16 +321,7 @@ export function OrderResultsReview({
 
       setOrder(orderData);
 
-      let resultRec = resultFromOrder(orderData);
-      if (resultRec?.id && getResultItems(resultRec).length === 0) {
-        try {
-          const full = await getResultById(resultRec.id);
-          if (full) resultRec = full;
-        } catch {
-          /* getbytwo dagi yozuv yetarli */
-        }
-      }
-
+      const resultRec = await loadSavedResult(orderData, orderId);
       const savedItems = getResultItems(resultRec);
       const shortName = userDocEarly
         ? `${(userDocEarly.username || "").charAt(0).toUpperCase()}.${userDocEarly.surname || ""}`
@@ -258,9 +346,18 @@ export function OrderResultsReview({
         const laboratoryName = item.laboratory?.name ?? "—";
         return [{ item, analysisId, analysisName, laboratoryName }];
       });
+      const savedByRow = prepared.map(row =>
+        decodeGridFillFromItems(savedItems, row.analysisId),
+      );
       const hydrated = await Promise.all(
-        prepared.map(async row => {
-          const resolved = resolveTemplateForAnalysis(row.analysisId, row.analysisName, templates);
+        prepared.map(async (row, index) => {
+          const savedTemplateId = savedByRow[index]?.[GRID_TEMPLATE_ID_KEY];
+          const resolved = resolveTemplateForAnalysis(
+            row.analysisId,
+            row.analysisName,
+            templates,
+            savedTemplateId,
+          );
           if (!resolved || !pdfTemplateNeedsImageHydration(resolved)) return resolved;
           return hydratePdfTemplateImages(resolved);
         }),
@@ -273,7 +370,7 @@ export function OrderResultsReview({
         const tpl = resolved
           ? bindTemplateToAnalysis(resolved, analysisId, analysisName)
           : null;
-        const saved = decodeGridFillFromItems(savedItems, analysisId);
+        const saved = savedByRow[index] ?? {};
         const hasSavedValues = Object.values(saved).some(v => String(v ?? "").trim() !== "");
 
         nextViews.push({
