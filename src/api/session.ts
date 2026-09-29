@@ -143,3 +143,30 @@ export function setStoredUser(user: AuthUser) {
 export function isAuthenticated(): boolean {
   return Boolean(getAccessToken());
 }
+
+/** Which storage currently holds the session (remember-me vs tab-only). */
+function activeSessionStore(): Storage | null {
+  if (localStorage.getItem(STORAGE_KEYS.accessToken)) return localStorage;
+  if (sessionStorage.getItem(STORAGE_KEYS.accessToken)) return sessionStorage;
+  return null;
+}
+
+/** Update tokens after a successful refresh, keeping the same storage. */
+export function updateSessionTokens(accessToken: string, refreshToken: string) {
+  const store = activeSessionStore() ?? localStorage;
+  store.setItem(STORAGE_KEYS.accessToken, accessToken);
+  store.setItem(STORAGE_KEYS.refreshToken, refreshToken);
+}
+
+export const SESSION_EXPIRED_EVENT = "ses:session-expired";
+
+/** Clear tokens and notify the app to show the login page. */
+export function forceSessionExpired() {
+  const userId = getStoredUser()?.id ?? null;
+  clearSession();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { userId } }),
+    );
+  }
+}

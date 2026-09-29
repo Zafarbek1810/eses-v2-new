@@ -18,6 +18,9 @@ export {
   setStoredUser,
   getStoredCompanyId,
   isAuthenticated,
+  updateSessionTokens,
+  forceSessionExpired,
+  SESSION_EXPIRED_EVENT,
 } from "./session";
 
 export { ApiError } from "./client";

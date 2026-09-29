@@ -5,7 +5,7 @@ import {
   Users, RefreshCw, CheckCircle,
   ArrowUpRight, ArrowDownRight, Info, AlertCircle, Calendar,
   Wallet, ClipboardList, Banknote, Clock3, Loader2, ChevronDown,
-  CreditCard, Coins, MousePointerClick, FlaskConical,
+  CreditCard, Coins, MousePointerClick, FlaskConical, ShieldCheck,
 } from "lucide-react";
 import {
   AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -21,6 +21,13 @@ import {
   type Order,
   type OrderTotalAmountRange,
 } from "@/api/order";
+import {
+  getAllSanmins,
+  getSanminsFull,
+  getSanminTotalAmountRange,
+  type Sanmin,
+  type SanminTotalAmountRange,
+} from "@/api/sanmin";
 import { getAllLaboratories } from "@/api/laboratory";
 import { getStoredUser } from "@/api/session";
 import { normalizeRoleName } from "@/lib/roles";
@@ -54,6 +61,71 @@ type ActivityRow = {
   payment: string;
   date: string;
 };
+
+type SanminActivityRow = {
+  id: string;
+  name: string;
+  workplace: string;
+  phone: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  price: string;
+  date: string;
+};
+
+const emptySanminRange = (): SanminTotalAmountRange => ({ totalAmount: 0, count: 0 });
+
+const SANMIN_PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: "Naqd",
+  card: "Karta",
+  click: "Click",
+  transfer: "Hisobdan o'tkazish",
+};
+
+function sanminPaymentMethodLabel(value: string) {
+  return SANMIN_PAYMENT_METHOD_LABELS[value] ?? value ?? "—";
+}
+
+function formatSanminPrice(raw: string | number | undefined) {
+  const n = typeof raw === "number" ? raw : Number(String(raw ?? "").replace(/\s/g, ""));
+  if (!Number.isFinite(n)) return "—";
+  return formatSom(n);
+}
+
+function mapSanminToActivity(item: Sanmin): SanminActivityRow {
+  return {
+    id: `#${item.id}`,
+    name: String(item.name ?? "").trim() || "—",
+    workplace: String(item.workplace ?? "").trim() || "—",
+    phone: String(item.phone ?? "").trim() || "—",
+    paymentMethod: sanminPaymentMethodLabel(String(item.payment_method ?? "")),
+    paymentStatus: String(item.payment_status ?? "pending"),
+    price: formatSanminPrice(item.price),
+    date: formatShortDate(item.createdAt ?? item.updatedAt),
+  };
+}
+
+async function fetchRecentSanmins(limit = 8): Promise<{ rows: SanminActivityRow[]; total: number }> {
+  const sortNewest = (list: Sanmin[]) =>
+    [...list].sort((a, b) => {
+      const ta = new Date(a.createdAt ?? a.updatedAt ?? 0).getTime();
+      const tb = new Date(b.createdAt ?? b.updatedAt ?? 0).getTime();
+      return tb - ta;
+    });
+
+  try {
+    const res = await getSanminsFull({ page: 1, limit });
+    const sorted = sortNewest(res.data).slice(0, limit);
+    return { rows: sorted.map(mapSanminToActivity), total: res.total };
+  } catch {
+    const all = await getAllSanmins().catch(() => [] as Sanmin[]);
+    const list = sortNewest(Array.isArray(all) ? all : []);
+    return {
+      rows: list.slice(0, limit).map(mapSanminToActivity),
+      total: list.length,
+    };
+  }
+}
 
 type InsightItem = {
   id: string;
@@ -294,6 +366,7 @@ const StatusBadge = ({ status }: { status: string }) => {
     pending: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
     completed: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400",
     paid: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400",
+    unpaid: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400",
     partially_completed: "bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300",
     in_progress: "bg-cyan-50 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300",
     canceled: "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400",
@@ -401,6 +474,13 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [activitiesLoading, setActivitiesLoading] = useState(!isKassirSangig);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [activitiesTotal, setActivitiesTotal] = useState(0);
+
+  const [sanminLoading, setSanminLoading] = useState(true);
+  const [sanminRows, setSanminRows] = useState<SanminActivityRow[]>([]);
+  const [sanminTotal, setSanminTotal] = useState(0);
+  const [sanminRangeStats, setSanminRangeStats] = useState<SanminTotalAmountRange>(emptySanminRange);
+  const [sanminPaidStats, setSanminPaidStats] = useState<SanminTotalAmountRange>(emptySanminRange);
+  const [sanminStatsLoading, setSanminStatsLoading] = useState(isLabStatsRole);
 
   const [labCompleted, setLabCompleted] = useState<OrderTotalAmountRange>(emptyRange());
   const [labPartial, setLabPartial] = useState<OrderTotalAmountRange>(emptyRange());
@@ -642,6 +722,65 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   }, [isKassirSangig, labScopeReady, scopedLabIds]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      setSanminLoading(true);
+      try {
+        const result = await fetchRecentSanmins(8);
+        if (!cancelled) {
+          setSanminRows(result.rows);
+          setSanminTotal(result.total);
+        }
+      } catch {
+        if (!cancelled) {
+          setSanminRows([]);
+          setSanminTotal(0);
+        }
+      } finally {
+        if (!cancelled) setSanminLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isLabStatsRole) {
+      setSanminStatsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setSanminStatsLoading(true);
+      try {
+        const baseParams = { startDate, endDate };
+        const [all, paid] = await Promise.all([
+          getSanminTotalAmountRange(baseParams),
+          getSanminTotalAmountRange({ ...baseParams, payment_status: "paid" }),
+        ]);
+        if (cancelled) return;
+        setSanminRangeStats(all);
+        setSanminPaidStats(paid);
+      } catch {
+        if (cancelled) return;
+        setSanminRangeStats(emptySanminRange());
+        setSanminPaidStats(emptySanminRange());
+      } finally {
+        if (!cancelled) setSanminStatsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLabStatsRole, startDate, endDate]);
+
+  useEffect(() => {
     if (!isLabStatsRole || isKassirSangig || !labScopeReady) return;
 
     let cancelled = false;
@@ -791,10 +930,10 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       color: "#7C3AED",
     },
     {
-      icon: ClipboardCheck,
-      label: "Jarayonda",
-      value: extraStatsLoading ? "…" : labPartial.count.toLocaleString("uz-UZ"),
-      hint: "Qisman yakunlangan",
+      icon: ShieldCheck,
+      label: "San minimum",
+      value: sanminStatsLoading ? "…" : sanminRangeStats.count.toLocaleString("uz-UZ"),
+      hint: formatSom(sanminRangeStats.totalAmount),
       color: "#0F766E",
     },
   ];
@@ -843,6 +982,16 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       });
     }
 
+    if (sanminRangeStats.count > 0) {
+      items.push({
+        id: "sanmin",
+        title: "San minimum",
+        desc: `${sanminRangeStats.count} ta · ${formatSom(sanminRangeStats.totalAmount)} · ${sanminPaidStats.count} to'langan`,
+        type: "info",
+        date: today,
+      });
+    }
+
     const dominantPay = PAYMENT_METHODS
       .map(m => ({ ...m, stats: paymentByMethod[m.method] }))
       .sort((a, b) => b.stats.count - a.stats.count)[0];
@@ -856,7 +1005,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       });
     }
 
-    if (items.length === 0 && !labStatsLoading && !labChartLoading) {
+    if (items.length === 0 && !labStatsLoading && !labChartLoading && !sanminStatsLoading) {
       items.push({
         id: "empty",
         title: "Ma'lumot yo'q",
@@ -866,7 +1015,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       });
     }
 
-    return items.slice(0, 4);
+    return items.slice(0, 5);
   })();
 
   const customTooltipStyle = {
@@ -1219,6 +1368,99 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         </div>
       </div>
       )}
+
+      <div className="bg-card rounded-xl border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-secondary/25">
+          <div>
+            <h3 className="text-[14px] font-bold text-foreground tracking-tight">So&apos;nggi san minimum</h3>
+            <p className="text-xs text-muted-foreground">
+              {isLabStatsRole
+                ? `Eng yangi yozuvlar · oraliq: ${formatSom(sanminRangeStats.totalAmount)} (${sanminRangeStats.count} ta)`
+                : "Eng yangi san minimum yozuvlari"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground"
+            title="Yangilash"
+            onClick={() => {
+              setSanminLoading(true);
+              void fetchRecentSanmins(8)
+                .then(result => {
+                  setSanminRows(result.rows);
+                  setSanminTotal(result.total);
+                })
+                .catch(() => {
+                  setSanminRows([]);
+                  setSanminTotal(0);
+                })
+                .finally(() => setSanminLoading(false));
+            }}
+          >
+            <RefreshCw className={`w-4 h-4 ${sanminLoading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                {["ID", "Ism", "Ish joyi", "Telefon", "To'lov usuli", "To'lov", "Summa", "Sana"].map(h => (
+                  <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.1em] px-5 py-3">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sanminLoading && sanminRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-5 py-10 text-center text-[13px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
+                    </span>
+                  </td>
+                </tr>
+              ) : sanminRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-5 py-10 text-center text-[13px] text-muted-foreground">
+                    San minimum yozuvlari topilmadi
+                  </td>
+                </tr>
+              ) : (
+                sanminRows.map(row => (
+                  <tr
+                    key={row.id}
+                    className="border-b border-border hover:bg-secondary/35 transition-colors"
+                  >
+                    <td className="px-5 py-3.5 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{row.id}</td>
+                    <td className="px-5 py-3.5 text-[12px] font-medium text-foreground">{row.name}</td>
+                    <td className="px-5 py-3.5 text-[12px] text-foreground">{row.workplace}</td>
+                    <td className="px-5 py-3.5 text-[12px] text-foreground whitespace-nowrap">{row.phone}</td>
+                    <td className="px-5 py-3.5 text-[12px] text-foreground whitespace-nowrap">{row.paymentMethod}</td>
+                    <td className="px-5 py-3.5"><StatusBadge status={row.paymentStatus} /></td>
+                    <td className="px-5 py-3.5 text-[12px] font-semibold text-foreground whitespace-nowrap">{row.price}</td>
+                    <td className="px-5 py-3.5 text-[11px] text-muted-foreground whitespace-nowrap">{row.date}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between px-5 py-3.5 border-t border-border">
+          <span className="text-xs text-muted-foreground">
+            {sanminRows.length} / {sanminTotal.toLocaleString("uz-UZ")} ta yozuv
+          </span>
+          {isLabStatsRole && (
+            <span className="text-xs text-muted-foreground">
+              {sanminStatsLoading
+                ? "Statistika yuklanmoqda..."
+                : `Oraliqda to'langan: ${sanminPaidStats.count.toLocaleString("uz-UZ")} · ${formatSom(sanminPaidStats.totalAmount)}`}
+            </span>
+          )}
+        </div>
+      </div>
     </main>
   );
 };

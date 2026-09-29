@@ -4,8 +4,9 @@ import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
   FlaskConical, MessageSquare, Search, UserPlus, ClipboardList, Pencil,
   RefreshCw, QrCode, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  User, Building2,
+  User, Building2, ShieldCheck,
 } from "lucide-react";
+import { SanMinimumPanel } from "@/components/SanMinimumPanel";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
@@ -144,11 +145,12 @@ const PAYMENT_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "transfer", label: "Hisobdan o'tkazish" },
 ];
 
-type KassaMode = "patient" | "organization";
+type KassaMode = "patient" | "organization" | "sanmin";
 
 const KASSA_TABS: { id: KassaMode; label: string; icon: typeof User }[] = [
   { id: "patient", label: "Bemor uchun", icon: User },
   { id: "organization", label: "Tashkilot uchun", icon: Building2 },
+  { id: "sanmin", label: "San minimum", icon: ShieldCheck },
 ];
 
 function formatPrice(price: number) {
@@ -1264,7 +1266,9 @@ export function OrderPage({
         <div>
           <h2 className="text-[15px] font-semibold text-foreground">Kassa</h2>
           <p className="text-xs text-muted-foreground">
-            {kassaMode === "organization"
+            {kassaMode === "sanmin"
+              ? "San minimum yozuvlari va to'lovlarni boshqarish"
+              : kassaMode === "organization"
               ? "Tashkilot uchun analizlar va to'lovni rasmiylashtirish"
               : "Bemor uchun analizlar va to'lovni rasmiylashtirish"}
           </p>
@@ -1302,7 +1306,9 @@ export function OrderPage({
         })}
       </div>
 
-      {kassaMode === "patient" && patientId == null ? (
+      {kassaMode === "sanmin" ? (
+        <SanMinimumPanel primaryColor={primaryColor} />
+      ) : kassaMode === "patient" && patientId == null ? (
         <section className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
           <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
             <div className="flex items-center gap-3">

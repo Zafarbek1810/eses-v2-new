@@ -10,6 +10,7 @@ export const ORDER_STATUS_LABELS: Record<string, string> = {
 export const PAYMENT_STATUS_LABELS: Record<string, string> = {
   pending: "Kutilmoqda",
   paid: "To'langan",
+  unpaid: "To'lanmagan",
   refunded: "Qaytarilgan",
 };
 

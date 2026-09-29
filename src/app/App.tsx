@@ -11,6 +11,7 @@ import {
   isAuthenticated,
   getStoredUser,
   setStoredUser,
+  SESSION_EXPIRED_EVENT,
   type AuthUser,
 } from "@/api/auth";
 import { getUserById } from "@/api/user";
@@ -1543,6 +1544,20 @@ export default function App() {
     setUser(null);
     setPage("login");
   };
+
+  // Access/refresh token muddati tugasa API client login sahifasiga qaytaradi
+  useEffect(() => {
+    const onSessionExpired = (event: Event) => {
+      const userId =
+        (event as CustomEvent<{ userId: number | null }>).detail?.userId ?? null;
+      clearAiDemoStorage(userId);
+      clearPdfTemplatesStorage();
+      setUser(null);
+      setPage("login");
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onSessionExpired);
+  }, []);
 
   const onShowResultRoute = isShowResultRoute();
 
