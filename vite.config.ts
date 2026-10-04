@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = (env.VITE_API_BASE_URL || 'https://eses.uz/api').replace(/\/$/, '')
 
-  const proxyPaths = ['/user', '/role', '/laboratory', '/baselaboratory', '/patient', '/region', '/analysis', '/baseanalysis', '/order', '/pattern', '/result', '/company', '/onlinestorage', '/globalstorage', '/plan', '/subscription', '/sanmin'] as const
+  const proxyPaths = ['/user', '/role', '/laboratory', '/baselaboratory', '/patient', '/region', '/analysis', '/baseanalysis', '/order', '/pattern', '/result', '/company', '/onlinestorage', '/globalstorage', '/plan', '/subscription', '/sanmin', '/deal'] as const
   const proxy = Object.fromEntries(
     proxyPaths.map(p => [p, { target: backendUrl, changeOrigin: true }]),
   )

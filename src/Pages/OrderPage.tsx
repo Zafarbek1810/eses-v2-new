@@ -4,9 +4,10 @@ import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
   FlaskConical, MessageSquare, Search, UserPlus, ClipboardList, Pencil,
   RefreshCw, QrCode, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  User, Building2, ShieldCheck,
+  User, Building2, ShieldCheck, FileText,
 } from "lucide-react";
 import { SanMinimumPanel } from "@/components/SanMinimumPanel";
+import { DealsPanel } from "@/components/DealsPanel";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
@@ -145,12 +146,13 @@ const PAYMENT_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "transfer", label: "Hisobdan o'tkazish" },
 ];
 
-type KassaMode = "patient" | "organization" | "sanmin";
+type KassaMode = "patient" | "organization" | "sanmin" | "deal";
 
 const KASSA_TABS: { id: KassaMode; label: string; icon: typeof User }[] = [
   { id: "patient", label: "Bemor uchun", icon: User },
   { id: "organization", label: "Tashkilot uchun", icon: Building2 },
   { id: "sanmin", label: "San minimum", icon: ShieldCheck },
+  { id: "deal", label: "Shartnomalar", icon: FileText },
 ];
 
 function formatPrice(price: number) {
@@ -1266,7 +1268,9 @@ export function OrderPage({
         <div>
           <h2 className="text-[15px] font-semibold text-foreground">Kassa</h2>
           <p className="text-xs text-muted-foreground">
-            {kassaMode === "sanmin"
+            {kassaMode === "deal"
+              ? "Shartnomalar va to'lovlarni boshqarish"
+              : kassaMode === "sanmin"
               ? "San minimum yozuvlari va to'lovlarni boshqarish"
               : kassaMode === "organization"
               ? "Tashkilot uchun analizlar va to'lovni rasmiylashtirish"
@@ -1306,7 +1310,9 @@ export function OrderPage({
         })}
       </div>
 
-      {kassaMode === "sanmin" ? (
+      {kassaMode === "deal" ? (
+        <DealsPanel primaryColor={primaryColor} />
+      ) : kassaMode === "sanmin" ? (
         <SanMinimumPanel primaryColor={primaryColor} />
       ) : kassaMode === "patient" && patientId == null ? (
         <section className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">

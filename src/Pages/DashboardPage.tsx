@@ -28,6 +28,13 @@ import {
   type Sanmin,
   type SanminTotalAmountRange,
 } from "@/api/sanmin";
+import {
+  getAllDeals,
+  getDealsFull,
+  getDealTotalAmountRange,
+  type Deal,
+  type DealTotalAmountRange,
+} from "@/api/deal";
 import { getAllLaboratories } from "@/api/laboratory";
 import { getStoredUser } from "@/api/session";
 import { normalizeRoleName } from "@/lib/roles";
@@ -74,6 +81,53 @@ type SanminActivityRow = {
 };
 
 const emptySanminRange = (): SanminTotalAmountRange => ({ totalAmount: 0, count: 0 });
+const emptyDealRange = (): DealTotalAmountRange => ({ totalAmount: 0, count: 0 });
+
+type DealActivityRow = {
+  id: string;
+  name: string;
+  number: string;
+  owner: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  amount: string;
+  date: string;
+};
+
+function mapDealToActivity(item: Deal): DealActivityRow {
+  return {
+    id: `#${item.id}`,
+    name: String(item.name ?? "").trim() || "—",
+    number: String(item.number ?? "").trim() || "—",
+    owner: String(item.owner_name ?? "").trim() || "—",
+    paymentMethod: sanminPaymentMethodLabel(String(item.payment_method ?? "")),
+    paymentStatus: String(item.payment_status ?? "pending"),
+    amount: formatSanminPrice(item.amount),
+    date: formatShortDate(item.createdAt ?? item.updatedAt),
+  };
+}
+
+async function fetchRecentDeals(limit = 8): Promise<{ rows: DealActivityRow[]; total: number }> {
+  const sortNewest = (list: Deal[]) =>
+    [...list].sort((a, b) => {
+      const ta = new Date(a.createdAt ?? a.updatedAt ?? 0).getTime();
+      const tb = new Date(b.createdAt ?? b.updatedAt ?? 0).getTime();
+      return tb - ta;
+    });
+
+  try {
+    const res = await getDealsFull({ page: 1, limit });
+    const sorted = sortNewest(res.data).slice(0, limit);
+    return { rows: sorted.map(mapDealToActivity), total: res.total };
+  } catch {
+    const all = await getAllDeals().catch(() => [] as Deal[]);
+    const list = sortNewest(Array.isArray(all) ? all : []);
+    return {
+      rows: list.slice(0, limit).map(mapDealToActivity),
+      total: list.length,
+    };
+  }
+}
 
 const SANMIN_PAYMENT_METHOD_LABELS: Record<string, string> = {
   cash: "Naqd",
@@ -441,6 +495,7 @@ const StatCard = ({ label, value, description, icon: Icon, trend, iconBg, iconCo
 export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const role = normalizeRoleName(getStoredUser()?.role?.name);
   const isKassirSangig = role === "kassir_sangig";
+  const isDirector = role === "director";
   const isLabStatsRole =
     role === "lab_director" || role === "lab_asistant" || role === "director" || isKassirSangig;
 
@@ -481,6 +536,14 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [sanminRangeStats, setSanminRangeStats] = useState<SanminTotalAmountRange>(emptySanminRange);
   const [sanminPaidStats, setSanminPaidStats] = useState<SanminTotalAmountRange>(emptySanminRange);
   const [sanminStatsLoading, setSanminStatsLoading] = useState(isLabStatsRole);
+
+  const [dealLoading, setDealLoading] = useState(isDirector);
+  const [dealRows, setDealRows] = useState<DealActivityRow[]>([]);
+  const [dealTotal, setDealTotal] = useState(0);
+  const [dealRangeStats, setDealRangeStats] = useState<DealTotalAmountRange>(emptyDealRange);
+  const [dealPaidStats, setDealPaidStats] = useState<DealTotalAmountRange>(emptyDealRange);
+  const [dealUnpaidStats, setDealUnpaidStats] = useState<DealTotalAmountRange>(emptyDealRange);
+  const [dealStatsLoading, setDealStatsLoading] = useState(isDirector);
 
   const [labCompleted, setLabCompleted] = useState<OrderTotalAmountRange>(emptyRange());
   const [labPartial, setLabPartial] = useState<OrderTotalAmountRange>(emptyRange());
@@ -781,6 +844,70 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   }, [isLabStatsRole, startDate, endDate]);
 
   useEffect(() => {
+    if (!isDirector) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      setDealLoading(true);
+      try {
+        const result = await fetchRecentDeals(8);
+        if (!cancelled) {
+          setDealRows(result.rows);
+          setDealTotal(result.total);
+        }
+      } catch {
+        if (!cancelled) {
+          setDealRows([]);
+          setDealTotal(0);
+        }
+      } finally {
+        if (!cancelled) setDealLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDirector]);
+
+  useEffect(() => {
+    if (!isDirector) {
+      setDealStatsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      setDealStatsLoading(true);
+      try {
+        const baseParams = { startDate, endDate };
+        const [all, paid, unpaid] = await Promise.all([
+          getDealTotalAmountRange(baseParams),
+          getDealTotalAmountRange({ ...baseParams, payment_status: "paid" }),
+          getDealTotalAmountRange({ ...baseParams, payment_status: "unpaid" }),
+        ]);
+        if (cancelled) return;
+        setDealRangeStats(all);
+        setDealPaidStats(paid);
+        setDealUnpaidStats(unpaid);
+      } catch {
+        if (cancelled) return;
+        setDealRangeStats(emptyDealRange());
+        setDealPaidStats(emptyDealRange());
+        setDealUnpaidStats(emptyDealRange());
+      } finally {
+        if (!cancelled) setDealStatsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isDirector, startDate, endDate]);
+
+  useEffect(() => {
     if (!isLabStatsRole || isKassirSangig || !labScopeReady) return;
 
     let cancelled = false;
@@ -936,6 +1063,15 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       hint: formatSom(sanminRangeStats.totalAmount),
       color: "#0F766E",
     },
+    ...(isDirector
+      ? [{
+          icon: FileText,
+          label: "Shartnomalar",
+          value: dealStatsLoading ? "…" : dealRangeStats.count.toLocaleString("uz-UZ"),
+          hint: formatSom(dealRangeStats.totalAmount),
+          color: "#2563EB",
+        }]
+      : []),
   ];
 
   const announcements = ((): InsightItem[] => {
@@ -992,6 +1128,16 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       });
     }
 
+    if (isDirector && dealRangeStats.count > 0) {
+      items.push({
+        id: "deals",
+        title: "Shartnomalar",
+        desc: `${dealRangeStats.count} ta · ${formatSom(dealRangeStats.totalAmount)} · ${dealPaidStats.count} to'langan`,
+        type: "info",
+        date: today,
+      });
+    }
+
     const dominantPay = PAYMENT_METHODS
       .map(m => ({ ...m, stats: paymentByMethod[m.method] }))
       .sort((a, b) => b.stats.count - a.stats.count)[0];
@@ -1005,7 +1151,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       });
     }
 
-    if (items.length === 0 && !labStatsLoading && !labChartLoading && !sanminStatsLoading) {
+    if (items.length === 0 && !labStatsLoading && !labChartLoading && !sanminStatsLoading && !dealStatsLoading) {
       items.push({
         id: "empty",
         title: "Ma'lumot yo'q",
@@ -1015,7 +1161,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       });
     }
 
-    return items.slice(0, 5);
+    return items.slice(0, 6);
   })();
 
   const customTooltipStyle = {
@@ -1461,6 +1607,149 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
           )}
         </div>
       </div>
+
+      {isDirector && (
+        <>
+          <div>
+            <h2 className="text-[15px] font-bold text-foreground tracking-tight">Shartnomalar</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Tanlangan oraliq bo&apos;yicha shartnoma statistikasi
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <StatCard
+              primaryColor={primaryColor}
+              label="Shartnomalar"
+              value={dealRangeStats.count.toLocaleString("uz-UZ")}
+              description={rangeLabel}
+              icon={FileText}
+              iconBg="#EFF6FF"
+              iconColor="#2563EB"
+              loading={dealStatsLoading}
+            />
+            <StatCard
+              primaryColor={primaryColor}
+              label="Umumiy summa"
+              value={formatSom(dealRangeStats.totalAmount)}
+              description={`${dealRangeStats.count} ta shartnoma`}
+              icon={Wallet}
+              iconBg={`${primaryColor}14`}
+              iconColor={primaryColor}
+              loading={dealStatsLoading}
+            />
+            <StatCard
+              primaryColor={primaryColor}
+              label="To'langan"
+              value={formatSom(dealPaidStats.totalAmount)}
+              description={`${dealPaidStats.count} ta to'langan shartnoma`}
+              icon={Banknote}
+              iconBg="#ECFDF5"
+              iconColor="#059669"
+              loading={dealStatsLoading}
+            />
+            <StatCard
+              primaryColor={primaryColor}
+              label="To'lanmagan"
+              value={formatSom(dealUnpaidStats.totalAmount)}
+              description={`${dealUnpaidStats.count} ta to'lanmagan shartnoma`}
+              icon={Clock3}
+              iconBg="#FFFBEB"
+              iconColor="#D97706"
+              loading={dealStatsLoading}
+            />
+          </div>
+
+          <div className="bg-card rounded-xl border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-secondary/25">
+              <div>
+                <h3 className="text-[14px] font-bold text-foreground tracking-tight">So&apos;nggi shartnomalar</h3>
+                <p className="text-xs text-muted-foreground">
+                  {`Eng yangi yozuvlar · oraliq: ${formatSom(dealRangeStats.totalAmount)} (${dealRangeStats.count} ta)`}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="p-1.5 rounded-md hover:bg-secondary transition-colors text-muted-foreground"
+                title="Yangilash"
+                onClick={() => {
+                  setDealLoading(true);
+                  void fetchRecentDeals(8)
+                    .then(result => {
+                      setDealRows(result.rows);
+                      setDealTotal(result.total);
+                    })
+                    .catch(() => {
+                      setDealRows([]);
+                      setDealTotal(0);
+                    })
+                    .finally(() => setDealLoading(false));
+                }}
+              >
+                <RefreshCw className={`w-4 h-4 ${dealLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    {["ID", "Raqam", "Nomi", "Egasi", "To'lov usuli", "To'lov", "Summa", "Sana"].map(h => (
+                      <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.1em] px-5 py-3">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dealLoading && dealRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-5 py-10 text-center text-[13px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
+                        </span>
+                      </td>
+                    </tr>
+                  ) : dealRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-5 py-10 text-center text-[13px] text-muted-foreground">
+                        Shartnomalar topilmadi
+                      </td>
+                    </tr>
+                  ) : (
+                    dealRows.map(row => (
+                      <tr
+                        key={row.id}
+                        className="border-b border-border hover:bg-secondary/35 transition-colors"
+                      >
+                        <td className="px-5 py-3.5 text-[11px] font-mono text-muted-foreground whitespace-nowrap">{row.id}</td>
+                        <td className="px-5 py-3.5 text-[12px] font-semibold text-foreground whitespace-nowrap">{row.number}</td>
+                        <td className="px-5 py-3.5 text-[12px] font-medium text-foreground">{row.name}</td>
+                        <td className="px-5 py-3.5 text-[12px] text-foreground">{row.owner}</td>
+                        <td className="px-5 py-3.5 text-[12px] text-foreground whitespace-nowrap">{row.paymentMethod}</td>
+                        <td className="px-5 py-3.5"><StatusBadge status={row.paymentStatus} /></td>
+                        <td className="px-5 py-3.5 text-[12px] font-semibold text-foreground whitespace-nowrap">{row.amount}</td>
+                        <td className="px-5 py-3.5 text-[11px] text-muted-foreground whitespace-nowrap">{row.date}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between px-5 py-3.5 border-t border-border">
+              <span className="text-xs text-muted-foreground">
+                {dealRows.length} / {dealTotal.toLocaleString("uz-UZ")} ta yozuv
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {dealStatsLoading
+                  ? "Statistika yuklanmoqda..."
+                  : `Oraliqda to'langan: ${dealPaidStats.count.toLocaleString("uz-UZ")} · ${formatSom(dealPaidStats.totalAmount)}`}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
     </main>
   );
 };
