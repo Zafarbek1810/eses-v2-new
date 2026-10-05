@@ -535,7 +535,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [sanminTotal, setSanminTotal] = useState(0);
   const [sanminRangeStats, setSanminRangeStats] = useState<SanminTotalAmountRange>(emptySanminRange);
   const [sanminPaidStats, setSanminPaidStats] = useState<SanminTotalAmountRange>(emptySanminRange);
-  const [sanminStatsLoading, setSanminStatsLoading] = useState(isLabStatsRole);
+  const [sanminStatsLoading, setSanminStatsLoading] = useState(true);
 
   const [dealLoading, setDealLoading] = useState(isDirector);
   const [dealRows, setDealRows] = useState<DealActivityRow[]>([]);
@@ -543,7 +543,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [dealRangeStats, setDealRangeStats] = useState<DealTotalAmountRange>(emptyDealRange);
   const [dealPaidStats, setDealPaidStats] = useState<DealTotalAmountRange>(emptyDealRange);
   const [dealUnpaidStats, setDealUnpaidStats] = useState<DealTotalAmountRange>(emptyDealRange);
-  const [dealStatsLoading, setDealStatsLoading] = useState(isDirector);
+  const [dealStatsLoading, setDealStatsLoading] = useState(true);
 
   const [labCompleted, setLabCompleted] = useState<OrderTotalAmountRange>(emptyRange());
   const [labPartial, setLabPartial] = useState<OrderTotalAmountRange>(emptyRange());
@@ -811,11 +811,6 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   }, []);
 
   useEffect(() => {
-    if (!isLabStatsRole) {
-      setSanminStatsLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
     void (async () => {
@@ -841,7 +836,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     return () => {
       cancelled = true;
     };
-  }, [isLabStatsRole, startDate, endDate]);
+  }, [startDate, endDate]);
 
   useEffect(() => {
     if (!isDirector) return;
@@ -872,11 +867,6 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   }, [isDirector]);
 
   useEffect(() => {
-    if (!isDirector) {
-      setDealStatsLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
     void (async () => {
@@ -905,7 +895,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     return () => {
       cancelled = true;
     };
-  }, [isDirector, startDate, endDate]);
+  }, [startDate, endDate]);
 
   useEffect(() => {
     if (!isLabStatsRole || isKassirSangig || !labScopeReady) return;
@@ -1018,7 +1008,25 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
   const topLab = labChartData[0] ?? null;
   const labsWithOrders = labChartData.filter(r => r.count > 0).length;
-  const pieTotal = labChartData.reduce((acc, r) => acc + r.count, 0);
+  const revenuePieData: LabChartRow[] = [
+    ...labChartData.filter(row => row.totalFinalAmount > 0),
+    ...(sanminRangeStats.totalAmount > 0
+      ? [{
+          lab: "San minimum",
+          count: sanminRangeStats.count,
+          totalFinalAmount: sanminRangeStats.totalAmount,
+        }]
+      : []),
+    ...(dealRangeStats.totalAmount > 0
+      ? [{
+          lab: "Shartnomalar",
+          count: dealRangeStats.count,
+          totalFinalAmount: dealRangeStats.totalAmount,
+        }]
+      : []),
+  ];
+  const pieTotal = revenuePieData.reduce((acc, row) => acc + row.totalFinalAmount, 0);
+  const pieChartLoading = labChartLoading || sanminStatsLoading || dealStatsLoading;
 
   const quickActions = [
     {
@@ -1301,37 +1309,46 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
         <div className="bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="mb-5">
-            <h3 className="text-[14px] font-bold text-foreground tracking-tight">Laboratoriyalar</h3>
+            <h3 className="text-[14px] font-bold text-foreground tracking-tight">Tushum ulushi</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
               {isKassirSangig
-                ? "Buyurtmalar ulushi · biriktirilgan laboratoriya"
-                : `Buyurtmalar ulushi · ${rangeLabel}`}
+                ? "Laboratoriya, san minimum va shartnomalar"
+                : `Laboratoriya, san minimum va shartnomalar · ${rangeLabel}`}
             </p>
           </div>
-          {labChartLoading ? (
+          {pieChartLoading ? (
             <div className="h-[195px] flex items-center justify-center text-muted-foreground gap-2 text-[13px]">
               <Loader2 className="w-4 h-4 animate-spin" /> Yuklanmoqda...
             </div>
-          ) : labChartData.length === 0 || pieTotal === 0 ? (
+          ) : revenuePieData.length === 0 || pieTotal === 0 ? (
             <div className="h-[195px] flex items-center justify-center text-[13px] text-muted-foreground">
-              Laboratoriya ma&apos;lumoti yo&apos;q
+              Tushum ma&apos;lumoti yo&apos;q
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={240}>
               <PieChart>
                 <Pie
-                  data={labChartData}
-                  dataKey="count"
+                  data={revenuePieData}
+                  dataKey="totalFinalAmount"
                   nameKey="lab"
                   cx="50%"
-                  cy="45%"
+                  cy="42%"
                   innerRadius={48}
                   outerRadius={78}
                   paddingAngle={2}
                   strokeWidth={0}
                 >
-                  {labChartData.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                  {revenuePieData.map((row, i) => (
+                    <Cell
+                      key={row.lab}
+                      fill={
+                        row.lab === "San minimum"
+                          ? "#0F766E"
+                          : row.lab === "Shartnomalar"
+                            ? "#2563EB"
+                            : PIE_COLORS[i % PIE_COLORS.length]
+                      }
+                    />
                   ))}
                 </Pie>
                 <Tooltip
@@ -1345,16 +1362,16 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
                   labelStyle={{ color: "#FFFFFF" }}
                   formatter={(value: number | string, _name, item) => {
                     const row = item?.payload as LabChartRow | undefined;
-                    const count = Number(value);
-                    const pct = pieTotal > 0 ? Math.round((count / pieTotal) * 100) : 0;
-                    const amount = row ? formatSom(row.totalFinalAmount) : "";
-                    const labName = row?.lab?.trim() || String(_name || "Laboratoriya");
-                    return [`${count.toLocaleString("uz-UZ")} (${pct}%) · ${amount}`, labName];
+                    const amount = Number(value);
+                    const pct = pieTotal > 0 ? Math.round((amount / pieTotal) * 100) : 0;
+                    const countLabel = row ? `${row.count.toLocaleString("uz-UZ")} ta` : "";
+                    const labName = row?.lab?.trim() || String(_name || "Tushum");
+                    return [`${formatSom(amount)} (${pct}%) · ${countLabel}`, labName];
                   }}
                 />
                 <Legend
                   verticalAlign="bottom"
-                  height={48}
+                  height={56}
                   formatter={(value: string) =>
                     value.length > 16 ? `${value.slice(0, 14)}…` : value
                   }
