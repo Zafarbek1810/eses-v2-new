@@ -936,15 +936,22 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     },
   ];
 
+  const totalIncomeAmount =
+    labAll.totalFinalAmount +
+    sanminRangeStats.totalAmount +
+    (isDirector ? dealRangeStats.totalAmount : 0);
+  const totalIncomeCount =
+    labAll.count + sanminRangeStats.count + (isDirector ? dealRangeStats.count : 0);
+
   const labStats = [
     {
-      label: "Jami summa",
-      value: formatSom(labAll.totalFinalAmount),
-      description: `${rangeLabel} · ${labAll.count} ta buyurtma`,
+      label: "Jami tushum",
+      value: formatSom(totalIncomeAmount),
+      description: `${rangeLabel} · ${totalIncomeCount} ta yozuv (laboratoriya + san minimum${isDirector ? " + shartnoma" : ""})`,
       icon: Wallet,
       iconBg: `${primaryColor}14`,
       iconColor: primaryColor,
-      loading: labStatsLoading,
+      loading: labStatsLoading || sanminStatsLoading || (isDirector && dealStatsLoading),
     },
     {
       label: "Buyurtmalar",
