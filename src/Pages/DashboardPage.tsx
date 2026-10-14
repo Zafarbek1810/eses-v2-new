@@ -54,9 +54,10 @@ type LabChartRow = {
 };
 
 type TrendRow = {
-  month: string;
-  orders: number;
-  paid: number;
+  day: string;
+  laboratory: number;
+  sanmin: number;
+  deals: number;
 };
 
 type ActivityRow = {
@@ -189,11 +190,6 @@ type InsightItem = {
   date: string;
 };
 
-const MONTH_LABELS_UZ = [
-  "Yan", "Fev", "Mar", "Apr", "May", "Iyun",
-  "Iyul", "Avg", "Sen", "Okt", "Noy", "Dek",
-] as const;
-
 const PIE_COLORS = [
   "#0D9488", "#059669", "#2563EB", "#D97706",
   "#7C3AED", "#EA580C", "#0E7490", "#DC2626",
@@ -260,27 +256,6 @@ async function fetchRangeForLabs(
     labIds.map(id => getOrderTotalAmountRange({ ...params, lab_id: id })),
   );
   return sumRanges(parts);
-}
-
-function monthRange(year: number, monthIndex: number) {
-  const start = new Date(year, monthIndex, 1);
-  const end = new Date(year, monthIndex + 1, 0);
-  const today = new Date();
-  const endClamped =
-    end.getFullYear() === today.getFullYear() &&
-    end.getMonth() === today.getMonth() &&
-    end > today
-      ? today
-      : end;
-  return { startDate: toIsoDate(start), endDate: toIsoDate(endClamped) };
-}
-
-function yearMonths(year = new Date().getFullYear()): { year: number; monthIndex: number; label: string }[] {
-  return MONTH_LABELS_UZ.map((label, monthIndex) => ({
-    year,
-    monthIndex,
-    label,
-  }));
 }
 
 function orderSubject(order: Order) {
@@ -535,6 +510,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const [sanminTotal, setSanminTotal] = useState(0);
   const [sanminRangeStats, setSanminRangeStats] = useState<SanminTotalAmountRange>(emptySanminRange);
   const [sanminPaidStats, setSanminPaidStats] = useState<SanminTotalAmountRange>(emptySanminRange);
+  const [sanminUnpaidStats, setSanminUnpaidStats] = useState<SanminTotalAmountRange>(emptySanminRange);
   const [sanminStatsLoading, setSanminStatsLoading] = useState(true);
 
   const [dealLoading, setDealLoading] = useState(isDirector);
@@ -725,22 +701,29 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     void (async () => {
       setTrendLoading(true);
       try {
-        const year = new Date().getFullYear();
-        const months = yearMonths(year);
-        const rows: TrendRow[] = [];
-        for (const m of months) {
-          const range = monthRange(m.year, m.monthIndex);
-          const [all, paid] = await Promise.all([
-            fetchRangeForLabs(labIds, range),
-            fetchRangeForLabs(labIds, { ...range, payment_status: "paid" }),
-          ]);
-          if (cancelled) return;
-          rows.push({
-            month: m.label,
-            orders: all.count,
-            paid: paid.count,
-          });
-        }
+        const today = new Date();
+        const rows = await Promise.all(
+          Array.from({ length: 7 }, async (_, index) => {
+            const date = new Date(today);
+            date.setDate(today.getDate() - (6 - index));
+            const range = { startDate: toIsoDate(date), endDate: toIsoDate(date) };
+            const [laboratory, sanmin, deals] = await Promise.all([
+              fetchRangeForLabs(labIds, { ...range, payment_status: "paid" }),
+              isDirector
+                ? getSanminTotalAmountRange({ ...range, payment_status: "paid" })
+                : Promise.resolve(emptySanminRange()),
+              isDirector
+                ? getDealTotalAmountRange({ ...range, payment_status: "paid" })
+                : Promise.resolve(emptyDealRange()),
+            ]);
+            return {
+              day: format(date, "dd.MM"),
+              laboratory: laboratory.totalFinalAmount,
+              sanmin: sanmin.totalAmount,
+              deals: deals.totalAmount,
+            };
+          }),
+        );
         if (!cancelled) setTrendData(rows);
       } catch {
         if (!cancelled) setTrendData([]);
@@ -752,7 +735,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     return () => {
       cancelled = true;
     };
-  }, [isKassirSangig]);
+  }, [isKassirSangig, isDirector]);
 
   useEffect(() => {
     if (isKassirSangig) return;
@@ -817,17 +800,20 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
       setSanminStatsLoading(true);
       try {
         const baseParams = { startDate, endDate };
-        const [all, paid] = await Promise.all([
+        const [all, paid, unpaid] = await Promise.all([
           getSanminTotalAmountRange(baseParams),
           getSanminTotalAmountRange({ ...baseParams, payment_status: "paid" }),
+          getSanminTotalAmountRange({ ...baseParams, payment_status: "unpaid" }),
         ]);
         if (cancelled) return;
         setSanminRangeStats(all);
         setSanminPaidStats(paid);
+        setSanminUnpaidStats(unpaid);
       } catch {
         if (cancelled) return;
         setSanminRangeStats(emptySanminRange());
         setSanminPaidStats(emptySanminRange());
+        setSanminUnpaidStats(emptySanminRange());
       } finally {
         if (!cancelled) setSanminStatsLoading(false);
       }
@@ -1010,11 +996,11 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
   const labsWithOrders = labChartData.filter(r => r.count > 0).length;
   const revenuePieData: LabChartRow[] = [
     ...labChartData.filter(row => row.totalFinalAmount > 0),
-    ...(sanminRangeStats.totalAmount > 0
+    ...(sanminPaidStats.totalAmount > 0
       ? [{
           lab: "San minimum",
-          count: sanminRangeStats.count,
-          totalFinalAmount: sanminRangeStats.totalAmount,
+          count: sanminPaidStats.count,
+          totalFinalAmount: sanminPaidStats.totalAmount,
         }]
       : []),
     ...(dealRangeStats.totalAmount > 0
@@ -1181,9 +1167,6 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
     boxShadow: "0 8px 24px rgba(12,31,28,0.1)",
   };
 
-  const trendYear = new Date().getFullYear();
-  const trendRangeLabel = `Yanvar – Dekabr ${trendYear}`;
-
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar animate-fade-in">
       {isLabStatsRole && (
@@ -1247,6 +1230,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         ))}
       </div>
 
+
       {isLabStatsRole && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {paymentMethodStats.map((s, i) => (
@@ -1255,23 +1239,140 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
         </div>
       )}
 
+{isDirector && (
+        <>
+          <div>
+            <h2 className="text-[15px] font-bold text-foreground tracking-tight">Shartnomalar</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Tanlangan oraliq bo&apos;yicha shartnoma statistikasi
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <StatCard
+              primaryColor={primaryColor}
+              label="Shartnomalar"
+              value={dealRangeStats.count.toLocaleString("uz-UZ")}
+              description={rangeLabel}
+              icon={FileText}
+              iconBg="#EFF6FF"
+              iconColor="#2563EB"
+              loading={dealStatsLoading}
+            />
+            <StatCard
+              primaryColor={primaryColor}
+              label="Umumiy summa"
+              value={formatSom(dealRangeStats.totalAmount)}
+              description={`${dealRangeStats.count} ta shartnoma`}
+              icon={Wallet}
+              iconBg={`${primaryColor}14`}
+              iconColor={primaryColor}
+              loading={dealStatsLoading}
+            />
+            <StatCard
+              primaryColor={primaryColor}
+              label="To'langan"
+              value={formatSom(dealPaidStats.totalAmount)}
+              description={`${dealPaidStats.count} ta to'langan shartnoma`}
+              icon={Banknote}
+              iconBg="#ECFDF5"
+              iconColor="#059669"
+              loading={dealStatsLoading}
+            />
+            <StatCard
+              primaryColor={primaryColor}
+              label="To'lanmagan"
+              value={formatSom(dealUnpaidStats.totalAmount)}
+              description={`${dealUnpaidStats.count} ta to'lanmagan shartnoma`}
+              icon={Clock3}
+              iconBg="#FFFBEB"
+              iconColor="#D97706"
+              loading={dealStatsLoading}
+            />
+          </div>
+
+         
+        </>
+      )}
+      {isDirector && (
+            <>
+              <div>
+                <h2 className="text-[15px] font-bold text-foreground tracking-tight">San minimum</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Tanlangan oraliq bo&apos;yicha san minimum statistikasi
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                <StatCard
+                  primaryColor={primaryColor}
+                  label="San minimum"
+                  value={sanminRangeStats.count.toLocaleString("uz-UZ")}
+                  description={rangeLabel}
+                  icon={ShieldCheck}
+                  iconBg="#F0FDFA"
+                  iconColor="#0F766E"
+                  loading={sanminStatsLoading}
+                />
+                <StatCard
+                  primaryColor={primaryColor}
+                  label="Umumiy summa"
+                  value={formatSom(sanminRangeStats.totalAmount)}
+                  description={`${sanminRangeStats.count} ta san minimum`}
+                  icon={Wallet}
+                  iconBg={`${primaryColor}14`}
+                  iconColor={primaryColor}
+                  loading={sanminStatsLoading}
+                />
+                <StatCard
+                  primaryColor={primaryColor}
+                  label="To&apos;langan"
+                  value={formatSom(sanminPaidStats.totalAmount)}
+                  description={`${sanminPaidStats.count} ta to&apos;langan san minimum`}
+                  icon={Banknote}
+                  iconBg="#ECFDF5"
+                  iconColor="#059669"
+                  loading={sanminStatsLoading}
+                />
+                <StatCard
+                  primaryColor={primaryColor}
+                  label="To&apos;lanmagan"
+                  value={formatSom(sanminUnpaidStats.totalAmount)}
+                  description={`${sanminUnpaidStats.count} ta to&apos;lanmagan san minimum`}
+                  icon={Clock3}
+                  iconBg="#FFFBEB"
+                  iconColor="#D97706"
+                  loading={sanminStatsLoading}
+                />
+              </div>
+            </>
+          )}
+
       <div className={`grid grid-cols-1 gap-4 ${isKassirSangig ? "" : "xl:grid-cols-3"}`}>
         {!isKassirSangig && (
         <div className="xl:col-span-2 bg-card rounded-xl p-5 border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)]">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
             <div>
-              <h3 className="text-[14px] font-bold text-foreground tracking-tight">Buyurtmalar tendensiyasi</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Oylik ko&apos;rsatkich · {trendRangeLabel}</p>
+              <h3 className="text-[14px] font-bold text-foreground tracking-tight">Haftalik tushumlar</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Oxirgi 7 kun · To&apos;langan tushumlar</p>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 rounded-sm" style={{ background: primaryColor }} />
-                <span className="text-[11px] text-muted-foreground">Buyurtmalar</span>
+                <span className="text-[11px] text-muted-foreground">Laboratoriya</span>
               </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-sm bg-emerald-500" />
-                <span className="text-[11px] text-muted-foreground">To&apos;langan</span>
-              </div>
+              {isDirector && (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-sm bg-teal-700" />
+                    <span className="text-[11px] text-muted-foreground">San minimum</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-sm bg-blue-600" />
+                    <span className="text-[11px] text-muted-foreground">Shartnomalar</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
           {trendLoading ? (
@@ -1296,11 +1397,19 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={customTooltipStyle} />
-                <Area type="monotone" dataKey="orders" name="Buyurtmalar" stroke={primaryColor} strokeWidth={2.5} fill="url(#gradOrders)" dot={false} />
-                <Area type="monotone" dataKey="paid" name="To'langan" stroke="#059669" strokeWidth={2.5} fill="url(#gradPaid)" dot={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} tickFormatter={(value: number) => value.toLocaleString("uz-UZ")} />
+                <Tooltip
+                  contentStyle={customTooltipStyle}
+                  formatter={(value: number | string, name: string) => [formatSom(Number(value)), name]}
+                />
+                <Area type="monotone" dataKey="laboratory" name="Laboratoriya" stroke={primaryColor} strokeWidth={2.5} fill="url(#gradOrders)" dot={false} />
+                {isDirector && (
+                  <>
+                    <Area type="monotone" dataKey="sanmin" name="San minimum" stroke="#0F766E" strokeWidth={2.5} fill="url(#gradPaid)" dot={false} />
+                    <Area type="monotone" dataKey="deals" name="Shartnomalar" stroke="#2563EB" strokeWidth={2.5} fill="url(#gradPaid)" dot={false} />
+                  </>
+                )}
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -1627,55 +1736,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
 
       {isDirector && (
         <>
-          <div>
-            <h2 className="text-[15px] font-bold text-foreground tracking-tight">Shartnomalar</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Tanlangan oraliq bo&apos;yicha shartnoma statistikasi
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            <StatCard
-              primaryColor={primaryColor}
-              label="Shartnomalar"
-              value={dealRangeStats.count.toLocaleString("uz-UZ")}
-              description={rangeLabel}
-              icon={FileText}
-              iconBg="#EFF6FF"
-              iconColor="#2563EB"
-              loading={dealStatsLoading}
-            />
-            <StatCard
-              primaryColor={primaryColor}
-              label="Umumiy summa"
-              value={formatSom(dealRangeStats.totalAmount)}
-              description={`${dealRangeStats.count} ta shartnoma`}
-              icon={Wallet}
-              iconBg={`${primaryColor}14`}
-              iconColor={primaryColor}
-              loading={dealStatsLoading}
-            />
-            <StatCard
-              primaryColor={primaryColor}
-              label="To'langan"
-              value={formatSom(dealPaidStats.totalAmount)}
-              description={`${dealPaidStats.count} ta to'langan shartnoma`}
-              icon={Banknote}
-              iconBg="#ECFDF5"
-              iconColor="#059669"
-              loading={dealStatsLoading}
-            />
-            <StatCard
-              primaryColor={primaryColor}
-              label="To'lanmagan"
-              value={formatSom(dealUnpaidStats.totalAmount)}
-              description={`${dealUnpaidStats.count} ta to'lanmagan shartnoma`}
-              icon={Clock3}
-              iconBg="#FFFBEB"
-              iconColor="#D97706"
-              loading={dealStatsLoading}
-            />
-          </div>
+          
 
           <div className="bg-card rounded-xl border border-border shadow-[0_1px_2px_rgba(12,31,28,0.04)] overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-secondary/25">
