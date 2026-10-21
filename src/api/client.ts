@@ -33,6 +33,7 @@ export type ApiRequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
   auth?: boolean;
   fallbackError?: string;
+  responseType?: "json" | "blob";
 };
 
 type RefreshResponse = {
@@ -103,6 +104,7 @@ export async function apiRequest<T>(
     auth = true,
     fallbackError = "So'rov muvaffaqiyatsiz",
     headers: extraHeaders,
+    responseType = "json",
     ...rest
   } = options;
 
@@ -125,6 +127,10 @@ export async function apiRequest<T>(
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  if (res.ok && responseType === "blob") {
+    return await res.blob() as T;
+  }
 
   let parsed: unknown = null;
   const text = await res.text();

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { ExcelReportButton } from "@/components/ExcelReportButton";
 import { useEffect, useMemo, useState } from "react";
 import {
   FileText, ClipboardCheck, Building2,
@@ -1184,6 +1185,7 @@ export const DashboardPage = ({ primaryColor }: { primaryColor: string }) => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {isDirector && <ExcelReportButton primaryColor={primaryColor} startDate={startDate} endDate={endDate} />}
             <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
               {DATE_PRESETS.map(preset => {
                 const r = preset.range();
