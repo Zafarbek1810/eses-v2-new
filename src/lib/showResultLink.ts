@@ -97,11 +97,6 @@ export function isShowResultRoute(
   return parseShowResultParams(pathname, search, hash) != null;
 }
 
-/** PIN: IDlar birlashmasi → "1372226" */
-export function buildShowResultPin(params: ShowResultParams): string {
-  return `${params.orderId}${params.analysisId}${params.storageId}`;
-}
-
 /** Relativ path (hash ichida ham shu): /showresult/{orderId}/{analysisId}/{storageId} */
 export function buildShowResultPath(params: ShowResultParams): string {
   const { orderId, analysisId, storageId } = params;

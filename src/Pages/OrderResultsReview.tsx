@@ -8,6 +8,7 @@ import { copyTextToClipboard } from "@/lib/copyText";
 import {
   getOrderById,
   resolveOrderItemAnalysisId,
+  updateOrder,
   updateOrderItemStatus,
   updateOrderStatus,
   type Order,
@@ -450,6 +451,18 @@ export function OrderResultsReview({
       );
       return;
     }
+    const resultView = views.find(
+      v => v.itemStatus !== "canceled" && v.template?.storageId != null && v.template.storageId > 0,
+    );
+    if (!resultView?.template?.storageId) {
+      pushToast("Natija havolasi uchun saqlangan PDF shablon topilmadi", "error");
+      return;
+    }
+    const resultLinkSms = buildShowResultUrl({
+      orderId,
+      analysisId: resultView.analysisId,
+      storageId: resultView.template.storageId,
+    });
     setConfirming(true);
     try {
       const role = normalizeRoleName(getStoredUser()?.role?.name);
@@ -471,6 +484,9 @@ export function OrderResultsReview({
       const itemsToComplete = labScope
         ? allItems.filter(item => orderItemInLabScope(item, labScope!))
         : allItems;
+
+      // Save the public link before status updates can trigger the completion SMS.
+      await updateOrder(orderId, { result_link_sms: resultLinkSms });
 
       for (const item of itemsToComplete) {
         const st = String(item.status || "");

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Download, FileText, Loader2, Lock } from "lucide-react";
+import { AlertCircle, Download, FileText, Loader2 } from "lucide-react";
 import {
   getOnlineStorageByIdTwo,
   resolveOnlineStorageAnalysisId,
@@ -34,10 +34,7 @@ import {
   type PdfDynamicContext,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
-import {
-  buildShowResultPin,
-  type ShowResultParams,
-} from "@/lib/showResultLink";
+import type { ShowResultParams } from "@/lib/showResultLink";
 
 type LoadState =
   | { status: "loading" }
@@ -127,33 +124,12 @@ function labAssistantFromResult(result: ResultRecord | null): string | null {
 }
 
 export function ShowResultPage({ params }: { params: ShowResultParams }) {
-  const expectedPin = buildShowResultPin(params);
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState<string | null>(null);
-  const [unlocked, setUnlocked] = useState(false);
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
 
-  const handleVerifyPin = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const entered = pin.replace(/\D/g, "");
-    if (!entered) {
-      setPinError("PIN-kodni kiriting");
-      return;
-    }
-    if (entered !== expectedPin) {
-      setPinError("PIN-kod noto'g'ri");
-      return;
-    }
-    setPinError(null);
-    setUnlocked(true);
-  };
-
   useEffect(() => {
-    if (!unlocked) return;
-
     let cancelled = false;
 
     const load = async () => {
@@ -287,7 +263,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
     return () => {
       cancelled = true;
     };
-  }, [unlocked, params.orderId, params.analysisId, params.storageId]);
+  }, [params.orderId, params.analysisId, params.storageId]);
 
   const handleDownloadPdf = async () => {
     if (state.status !== "ready" || downloading) return;
@@ -333,9 +309,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
             <div className="min-w-0">
               <p className="text-sm font-semibold tracking-tight">SES — tahlil natijasi</p>
               <p className="truncate text-xs text-slate-500">
-                {unlocked
-                  ? `Buyurtma #${params.orderId}${state.status === "ready" ? ` · ${state.analysisName}` : ""}`
-                  : "Natijani ochish uchun PIN-kod kerak"}
+                {`Buyurtma #${params.orderId}${state.status === "ready" ? ` · ${state.analysisName}` : ""}`}
               </p>
             </div>
           </div>
@@ -359,80 +333,27 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6">
-        {!unlocked && (
-          <div className="mx-auto max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-teal-500/10 text-teal-600">
-              <Lock className="h-6 w-6" />
-            </div>
-            <h1 className="text-center text-base font-semibold text-slate-900">
-              PIN-kodni kiriting
-            </h1>
-            <p className="mt-1.5 text-center text-sm text-slate-500">
-              Natijani ko&apos;rish uchun PIN-kodni kiriting
-            </p>
-            <form className="mt-5" onSubmit={handleVerifyPin}>
-              <label className="sr-only" htmlFor="showresult-pin">
-                PIN-kod
-              </label>
-              <input
-                id="showresult-pin"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                autoFocus
-                maxLength={expectedPin.length}
-                value={pin}
-                onChange={e => {
-                  const next = e.target.value.replace(/\D/g, "").slice(0, expectedPin.length);
-                  setPin(next);
-                  if (next.length === expectedPin.length) {
-                    if (next === expectedPin) {
-                      setPinError(null);
-                      setUnlocked(true);
-                    } else {
-                      setPinError("PIN-kod noto'g'ri");
-                    }
-                  } else {
-                    setPinError(null);
-                  }
-                }}
-                placeholder="PIN-kod"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-lg font-semibold tracking-[0.35em] text-slate-900 placeholder:tracking-normal placeholder:font-medium placeholder:text-slate-400 focus:border-teal-400 focus:bg-white focus:outline-none focus:ring-4 focus:ring-teal-500/15"
-              />
-              {pinError && (
-                <p className="mt-2 text-center text-sm text-red-600">{pinError}</p>
-              )}
-              <button
-                type="submit"
-                className="mt-4 inline-flex w-full items-center justify-center rounded-xl bg-teal-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-teal-700"
-              >
-                Tasdiqlash
-              </button>
-            </form>
-          </div>
-        )}
-
-        {unlocked && downloadError && (
+        {downloadError && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {downloadError}
           </div>
         )}
 
-        {unlocked && state.status === "loading" && (
+        {state.status === "loading" && (
           <div className="flex flex-col items-center justify-center gap-3 py-24 text-slate-500">
             <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
             <p className="text-sm">PDF natija yuklanmoqda...</p>
           </div>
         )}
 
-        {unlocked && state.status === "error" && (
+        {state.status === "error" && (
           <div className="mx-auto max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
             <AlertCircle className="mx-auto mb-3 h-8 w-8 text-red-500" />
             <p className="text-sm font-medium text-slate-900">Natijani ochib bo&apos;lmadi</p>
           </div>
         )}
 
-        {unlocked && state.status === "ready" && (
+        {state.status === "ready" && (
           <div className="flex flex-col items-center gap-4 pb-8">
             <button
               type="button"
